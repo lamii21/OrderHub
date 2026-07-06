@@ -1,0 +1,29 @@
+{
+  "name": "orderhub",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "@supabase/supabase-js": "^2.110.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0",
+    "recharts": "^3.9.2",
+    "googleapis": "^173.0.0",
+    "@supabase/ssr": "^0.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4.3.2",
+    "@tailwindcss/postcss": "^4.3.2"
+  }
+}
