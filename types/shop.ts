@@ -1,0 +1,27 @@
+export type ShopWithStats = {
+  id: number;
+  name: string;
+  platform: string;
+  sheet_id: string | null;
+  sheet_name: string | null;
+  store_url: string | null;
+  sync_frequency: string;
+  last_sync_attempt_at: string | null;
+  last_sync_status: "success" | "failed" | null;
+  last_success_sync_at: string | null;
+  last_failed_sync_at: string | null;
+  last_sync_duration_ms: number | null;
+  last_sync_message: string | null;
+  last_products_imported_count: number | null;
+  last_orders_imported_count: number | null;
+  currency: string;
+  timezone: string;
+  sync_products_enabled: boolean;
+  sync_orders_enabled: boolean;
+  auto_sync_enabled: boolean;
+  email_notifications_enabled: boolean;
+  created_at: string;
+  product_count: number | string;
+  order_count: number | string;
+  total_revenue: number | string;
+};

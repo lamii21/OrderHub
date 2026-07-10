@@ -1,0 +1,208 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { getAutomationModule, recordWorkflowExecution, isCircuitOpen } = vi.hoisted(() => ({
+  getAutomationModule: vi.fn(),
+  recordWorkflowExecution: vi.fn(),
+  isCircuitOpen: vi.fn(),
+}));
+
+vi.mock("@/lib/automation-modules", () => ({ getAutomationModule }));
+vi.mock("@/lib/workflows/execution-history", () => ({ recordWorkflowExecution }));
+vi.mock("@/lib/workflows/circuit-breaker", () => ({
+  isCircuitOpen,
+  CONSECUTIVE_FAILURE_THRESHOLD: 3,
+}));
+
+import { runWorkflow } from "@/lib/workflows/engine";
+import type { WorkflowWithSteps } from "@/types/workflow";
+import type { Order } from "@/types/order";
+
+const order = { id: 100, shop_id: 1 } as Order;
+
+function workflowWithSteps(steps: WorkflowWithSteps["steps"]): WorkflowWithSteps {
+  return {
+    id: 1,
+    shop_id: 1,
+    name: "Test workflow",
+    trigger_event: "order.created",
+    is_active: true,
+    activated_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+    steps,
+  };
+}
+
+beforeEach(() => {
+  getAutomationModule.mockReset();
+  recordWorkflowExecution.mockReset();
+  isCircuitOpen.mockReset().mockResolvedValue(false);
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("runWorkflow", () => {
+  it("records a failed step and continues when a module isn't registered", async () => {
+    getAutomationModule.mockReturnValue(null);
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "ghost-module", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(recordWorkflowExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepOrder: 1,
+        moduleName: "ghost-module",
+        status: "failed",
+        message: 'No automation module registered for "ghost-module".',
+      })
+    );
+  });
+
+  it("skips a step (recorded as success) when shouldRun returns false, without calling run()", async () => {
+    const run = vi.fn();
+    getAutomationModule.mockReturnValue({ shouldRun: vi.fn().mockResolvedValue(false), run });
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "archive", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(recordWorkflowExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "success", message: "Skipped (shouldRun returned false)." })
+    );
+  });
+
+  it("runs a step with no shouldRun as always-running", async () => {
+    const run = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockReturnValue({ run });
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "archive", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the step's own config to run()", async () => {
+    const run = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockReturnValue({ run });
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "whatsapp", config: { template: "Hi {{customer_name}}" } },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(run).toHaveBeenCalledWith(order, { template: "Hi {{customer_name}}" }, {});
+  });
+
+  it("folds a successful step's data into the context passed to later steps", async () => {
+    const aiAgentRun = vi.fn().mockResolvedValue({ success: true, data: { category: "vip" } });
+    const tagOrderRun = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockImplementation((name: string) =>
+      name === "ai-agent" ? { run: aiAgentRun } : { run: tagOrderRun }
+    );
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "ai-agent", config: {} },
+      { id: 2, workflow_id: 1, step_order: 2, module_name: "tag-order", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(tagOrderRun).toHaveBeenCalledWith(order, {}, { "ai-agent": { category: "vip" } });
+  });
+
+  it("records a failed ModuleResult without throwing, and still runs the next step", async () => {
+    const firstRun = vi.fn().mockResolvedValue({ success: false, message: "No credentials." });
+    const secondRun = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockImplementation((name: string) =>
+      name === "whatsapp" ? { run: firstRun } : { run: secondRun }
+    );
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "whatsapp", config: {} },
+      { id: 2, workflow_id: 1, step_order: 2, module_name: "archive", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(secondRun).toHaveBeenCalledTimes(1);
+    expect(recordWorkflowExecution).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ status: "failed", message: "No credentials." })
+    );
+    expect(recordWorkflowExecution).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: "success" })
+    );
+  });
+
+  it("isolates a step that throws: catches it, records a safe fixed message (never the raw error), and continues", async () => {
+    const throwingRun = vi.fn().mockRejectedValue(new Error("stack trace with secrets"));
+    const secondRun = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockImplementation((name: string) =>
+      name === "webhook" ? { run: throwingRun } : { run: secondRun }
+    );
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "webhook", config: {} },
+      { id: 2, workflow_id: 1, step_order: 2, module_name: "archive", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(secondRun).toHaveBeenCalledTimes(1);
+    const failedCall = recordWorkflowExecution.mock.calls[0][0];
+    expect(failedCall.status).toBe("failed");
+    expect(failedCall.message).toBe('Module "webhook" failed to run.');
+    expect(failedCall.message).not.toContain("secrets");
+  });
+
+  it("runs steps in order and records one execution per step", async () => {
+    const order1 = vi.fn();
+    const run = vi.fn(async (..._args) => {
+      order1(Date.now());
+      return { success: true };
+    });
+    getAutomationModule.mockReturnValue({ run });
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "archive", config: {} },
+      { id: 2, workflow_id: 1, step_order: 2, module_name: "notes", config: {} },
+      { id: 3, workflow_id: 1, step_order: 3, module_name: "tag-order", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(recordWorkflowExecution).toHaveBeenCalledTimes(3);
+    expect(recordWorkflowExecution.mock.calls.map((c) => c[0].stepOrder)).toEqual([1, 2, 3]);
+  });
+
+  it("skips a step whose circuit is open, without calling the module, and records why", async () => {
+    const run = vi.fn();
+    getAutomationModule.mockReturnValue({ run });
+    isCircuitOpen.mockResolvedValue(true);
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "whatsapp", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(isCircuitOpen).toHaveBeenCalledWith(1, 1, "whatsapp");
+    expect(run).not.toHaveBeenCalled();
+    expect(recordWorkflowExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", message: expect.stringContaining("Circuit open") })
+    );
+  });
+
+  it("still runs a step normally when its circuit is closed", async () => {
+    const run = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockReturnValue({ run });
+    isCircuitOpen.mockResolvedValue(false);
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "archive", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order);
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

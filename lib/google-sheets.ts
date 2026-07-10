@@ -15,8 +15,14 @@ function getAuth() {
     auth = new google.auth.JWT({
       email: requireEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
       key: requireEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY").replace(/\\n/g, "\n"),
+      // drive.file (not the full drive scope) — this service account only
+      // ever touches two kinds of files: the template it copies (must be
+      // explicitly shared with the service account email, which "opens" it
+      // for drive.file purposes) and the per-shop copies it creates itself.
+      // Narrower scope, same functionality, smaller blast radius if the
+      // service account key ever leaks.
       scopes: [
-        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/spreadsheets",
       ],
     });
@@ -73,4 +79,29 @@ export async function appendOrderRows(spreadsheetId: string, rows: (string | num
     insertDataOption: "INSERT_ROWS",
     requestBody: { values: rows },
   });
+}
+
+// Appends one row to any spreadsheet/tab the merchant chooses — backs the
+// Google Sheets automation module, which is a distinct, output-only use of
+// Sheets from the ingestion pipeline above (appendOrderRows/the Apps
+// Script). Same service account, same auth — the only new thing is that
+// the spreadsheet/tab is a per-step config value instead of the shop's own
+// provisioned sheet. Returns the updated range so the module can report
+// which row it wrote, same shape Google's API itself returns.
+export async function appendRowToSheet(
+  spreadsheetId: string,
+  sheetName: string,
+  row: (string | number)[]
+): Promise<{ updatedRange?: string }> {
+  const sheets = google.sheets({ version: "v4", auth: getAuth() });
+
+  const response = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${sheetName}!A:Z`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [row] },
+  });
+
+  return { updatedRange: response.data.updates?.updatedRange ?? undefined };
 }

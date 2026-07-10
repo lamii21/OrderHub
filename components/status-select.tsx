@@ -2,15 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { updateOrderStatus } from "@/app/dashboard/actions";
-
-const STATUSES = [
-  "pending",
-  "confirmed",
-  "processing",
-  "shipped",
-  "delivered",
-  "cancelled",
-] as const;
+import { ORDER_STATUSES } from "@/lib/validation";
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-gray-100 text-gray-800",
@@ -52,7 +44,7 @@ export function StatusSelect({ orderId, status }: { orderId: number; status: str
           STATUS_STYLES[value] ?? STATUS_STYLES.pending
         }`}
       >
-        {STATUSES.map((option) => (
+        {ORDER_STATUSES.map((option) => (
           <option key={option} value={option}>
             {option}
           </option>

@@ -9,8 +9,9 @@ export type ShopInput = {
   // shop to — only /shops/new and /shops/connect (called by an authenticated
   // user) pass this, so a webhook-only upsert never overwrites the owner.
   userId?: string;
-  shopifyStoreUrl?: string;
-  shopifyAccessToken?: string;
+  storeUrl?: string;
+  apiKey?: string;
+  apiSecret?: string;
 };
 
 // The single place every code path goes through to create or refresh a shop,
@@ -29,10 +30,9 @@ export async function createOrUpdateShop(input: ShopInput) {
         sheet_id: input.sheetId,
         sheet_name: input.sheetName,
         ...(input.userId !== undefined && { user_id: input.userId }),
-        ...(input.shopifyStoreUrl !== undefined && { shopify_store_url: input.shopifyStoreUrl }),
-        ...(input.shopifyAccessToken !== undefined && {
-          shopify_access_token: input.shopifyAccessToken,
-        }),
+        ...(input.storeUrl !== undefined && { store_url: input.storeUrl }),
+        ...(input.apiKey !== undefined && { api_key: input.apiKey }),
+        ...(input.apiSecret !== undefined && { api_secret: input.apiSecret }),
       },
       { onConflict: "sheet_id" }
     )

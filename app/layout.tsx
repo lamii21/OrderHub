@@ -35,11 +35,17 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   <Link href="/products" className="text-blue-600 hover:underline">
                     Products
                   </Link>
+                  <Link href="/shops" className="text-blue-600 hover:underline">
+                    Shops
+                  </Link>
                   <Link href="/shops/new" className="text-blue-600 hover:underline">
                     New Shop
                   </Link>
                   <Link href="/shops/connect" className="text-blue-600 hover:underline">
-                    Connect Shopify
+                    Connect Store
+                  </Link>
+                  <Link href="/admin" className="text-blue-600 hover:underline">
+                    Admin
                   </Link>
                   <form action={logout}>
                     <SubmitButton variant="secondary" pendingLabel="Logging out…">

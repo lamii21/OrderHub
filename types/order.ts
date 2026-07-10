@@ -6,10 +6,14 @@ export type Order = {
   customer_phone: string | null;
   customer_city: string | null;
   customer_address: string | null;
+  customer_email: string | null;
   product: string | null;
+  product_id: number | null;
   quantity: number | null;
   price: number | null;
   status: string;
+  tags: string[];
+  archived_at: string | null;
   created_at: string;
   shops: { name: string; platform: string } | null;
 };

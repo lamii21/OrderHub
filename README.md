@@ -12,7 +12,9 @@ microservices, no auth system beyond what's described below).
 - **Supabase** (Postgres + REST API, accessed via the service-role key from the server only)
 - **Recharts** (analytics charts)
 - **googleapis** (Google Drive/Sheets API — spreadsheet provisioning)
-- Plain `fetch()` against the Shopify Admin REST API (no SDK)
+- Plain `fetch()` against each platform's REST API (no SDK) — Shopify, WooCommerce, and YouCan are
+  all supported via a small connector registry (`lib/platforms/`, see Project Architecture below)
+- **Vitest** — the test suite (`tests/`), run via `npx vitest run`
 
 ## How it works (the core pipeline)
 
@@ -92,8 +94,10 @@ of that).
 
 - `npm run dev` — start the dev server (Turbopack).
 - `npm run build` / `npm run start` — production build and run it locally.
-- There is no test suite and no linter configured beyond `tsc --noEmit`; run that directly to
-  typecheck: `npx tsc --noEmit`.
+- `npx vitest run` — run the test suite (`tests/`: unit tests for `lib/`, Server Action tests with
+  a hand-built chainable Supabase mock, webhook/route tests, workflow engine tests). `npx vitest`
+  for watch mode.
+- No linter is configured beyond `tsc --noEmit`; run that directly to typecheck: `npx tsc --noEmit`.
 - Database changes: edit `supabase/schema.sql` directly (it's the single source of truth for the
   schema) and run the new statements in the Supabase SQL Editor. There is no separate migrations
   folder — this app is small enough that one idempotent file is simpler to maintain correctly.
@@ -155,15 +159,32 @@ Deliberately flat — no layers, no dependency injection, no domain/service/repo
   or from a Client Component via `useTransition`. No API routes for internal writes — the one
   real API route (`/api/orders`) exists only because it must be reachable from Google's servers,
   not from this app's own UI.
-- **`lib/*.ts`** — one small file per external service (`supabase.ts`, `google-sheets.ts`,
-  `shopify.ts`), each exporting a couple of plain functions. Not classes, not repositories. Two of
-  these are Supabase clients with deliberately different privilege levels — see Authentication.
+- **`lib/*.ts`** — one small file per external service (`supabase.ts`, `google-sheets.ts`), each
+  exporting a couple of plain functions. Not classes, not repositories. Two of these are Supabase
+  clients with deliberately different privilege levels — see Authentication.
+- **`lib/platforms/`** — the multi-platform connector registry (Shopify/WooCommerce/YouCan) behind
+  a single `PlatformConnector` interface, replacing the original Shopify-only `lib/shopify.ts` —
+  see Project Architecture → Platform rate-limit retries above.
+- **`lib/workflows/`** — the Workflow Engine: `manager.ts` resolves which of a shop's *active*
+  workflows match an event, `engine.ts` (`runWorkflow`) runs a matched workflow's steps in order
+  (one try/catch per step, a circuit breaker per step after repeated failures), `dispatch.ts`
+  (`handleEvent`) is the single entry point both the webhook and `updateOrderStatus` call to
+  trigger it. `app/shops/[id]/workflows/` is the Builder UI + Server Actions (create/edit/reorder
+  steps, activate/deactivate, "Test Workflow Now") — a plain reorderable list, no drag-and-drop
+  canvas.
+- **`lib/automation-modules/`** — one file per step type a workflow can run (WhatsApp, email,
+  Google Sheets append, webhook, tag order, update status, archive, notes, delivery, plus a few
+  registered stubs), each implementing the same small `run()`/`validateConfig()` contract
+  (`types.ts`) so the engine never special-cases a particular module.
+- **`app/admin/`** — the Admin & Monitoring Center: sync/workflow statistics, an error center, and
+  manual "run now"/"retry failed" actions, all read-scoped to the logged-in user's own shops via
+  RLS like every other page (no cross-user admin view).
 - **Client Components** exist only where interaction requires them: the status dropdown, the
   order/product details modal, and the `SubmitButton`/`useFormStatus` loading indicator. Every
   other component is a Server Component.
-- **Supabase Postgres functions** (`get_dashboard_stats`, `get_products_with_stats`, etc.) do all
-  aggregation in SQL, called via `.rpc()`. No stats are computed by pulling every row into
-  JavaScript.
+- **Supabase Postgres functions** (`get_dashboard_stats`, `get_products_with_stats`,
+  `get_shops_with_stats`, `get_workflows_with_stats`, etc.) do all aggregation in SQL, called via
+  `.rpc()`. No stats are computed by pulling every row into JavaScript.
 
 ### Why Shopify sync doesn't write to Supabase
 
@@ -232,7 +253,7 @@ Three additions in `supabase/schema.sql`, all written to be safe to re-run:
 
 ### Shopify incremental sync cursor
 
-`shops.shopify_last_synced_at` no longer gets set to `new Date()` (wall-clock time when the sync
+`shops.last_synced_at` no longer gets set to `new Date()` (wall-clock time when the sync
 action finishes). It's now set to the **newest `created_at` Shopify actually returned**, advanced
 by one second. Two reasons for the adjustment:
 - Using wall-clock time left a gap: any order created between the fetch and the cursor write would
@@ -245,12 +266,16 @@ by one second. Two reasons for the adjustment:
 If Shopify returns no new orders, the cursor is left completely unchanged — there's nothing to
 advance it to, and touching it wouldn't be safe.
 
-### Shopify rate-limit retries
+### Platform rate-limit retries
 
-`lib/shopify.ts` wraps every Shopify request (`testShopifyConnection`, product sync, order sync)
-in a small retry loop: on `HTTP 429`, it reads the `Retry-After` header, waits that many seconds,
-and retries — up to 3 times. If Shopify is still rate-limiting after the third retry, it throws,
-which the calling Server Action turns into the existing friendly "could not sync" message. No
+Shopify has since been generalized into `lib/platforms/` — a small connector registry
+(`index.ts` → `getConnector(platform)`) with one file per platform (`shopify.ts`,
+`woocommerce.ts`, `youcan.ts`), each implementing the same `PlatformConnector` interface
+(`types.ts`: `testConnection`/`fetchProducts`/`fetchOrders`). The `HTTP 429` retry loop described
+in this section originally lived only in `lib/shopify.ts`; it's now `lib/platforms/retry.ts`,
+shared by every connector: on `429`, it reads the `Retry-After` header, waits that many seconds,
+and retries — up to 3 times. If a platform is still rate-limiting after the third retry, it
+throws, which the calling code turns into the existing friendly "could not sync" message. No
 library — just a loop and `setTimeout`.
 
 ### One shop-creation helper
@@ -359,49 +384,63 @@ app/
   layout.tsx                  # root layout + auth-aware nav bar
   error.tsx                   # root error boundary (safety net for uncaught errors)
   globals.css                 # Tailwind import, nothing else
-  api/orders/route.ts         # the one public webhook — POST from Apps Script
+  api/
+    orders/route.ts           # the public webhook — POST from Apps Script / platform sync
+    cron/sync/route.ts        # scheduled sync — bounded concurrency, rate-limited, secret-gated
+    health/route.ts           # unauthenticated uptime probe, rate-limited
   login/
     page.tsx                  # email + password form
-    actions.ts                # login(), logout() server actions
+    actions.ts                # login() (rate-limited), logout() server actions
   dashboard/
     page.tsx                  # orders table + 4 KPI cards
     actions.ts                # updateOrderStatus server action
   analytics/page.tsx           # KPIs + 3 charts + 2 tables
   products/page.tsx            # read-only product list + stats
+  admin/
+    page.tsx                  # sync/workflow stats, error center, system health
+    actions.ts                # run sync now, test connections, retry failed workflow executions
   shops/
-    new/
-      page.tsx                # generic "create shop + provision Google Sheet" form
-      actions.ts
-    connect/
-      page.tsx                # Shopify connect form + Test/Sync action panel
-      actions.ts              # connectShop, testConnection, syncProducts, syncOrders
+    new/                      # generic "create shop + provision Google Sheet" form
+    connect/                  # platform connect form + Test/Sync action panel
+    [id]/workflows/           # Workflow Builder: list + editor pages, reorder/activate/test actions
+    actions.ts                 # deleteShop, updateShopName, disconnectStore, updateSyncFrequency
 
 proxy.ts                       # route protection (redirects to /login) — Next's name for middleware
+instrumentation.ts              # startup env validation (lib/env-validation.ts)
 
 components/
   ui/table.tsx                 # shadcn-style table primitives (plain HTML + Tailwind)
-  charts/                      # 3 Recharts components + shared color constants
+  charts/                      # Recharts components + shared color constants
   orders-table.tsx             # client: orders table + status select + details modal
   products-table.tsx            # client: products table + details modal
   status-select.tsx            # client: status dropdown (Server Action + useTransition)
   submit-button.tsx             # client: useFormStatus-based loading button
   detail-modal.tsx              # shared modal + row primitives (used by both tables)
   form-field.tsx / action-card.tsx / sheet-created-panel.tsx  # shared form/page building blocks
-  stat-card.tsx / error-banner.tsx
+  stat-card.tsx / error-banner.tsx / system-health-badge.tsx
 
 lib/
   supabase.ts                  # service-role client — bypasses RLS, server-only
   supabase-server.ts            # user-scoped client for Server Components/Actions — RLS applies
   supabase-middleware.ts        # session check used by proxy.ts
   google-sheets.ts              # Drive/Sheets API: provisioning + order-row append
-  shopify.ts                    # Shopify Admin REST API: test/products/orders + 429 retry
+  platforms/                    # multi-platform connectors — see Project Architecture above
+  workflows/                    # Workflow Engine — manager/engine/dispatch/execution-history
+  automation-modules/           # one file per workflow step type (whatsapp, email, webhook, ...)
+  sync.ts                       # per-shop product/order sync, bounded concurrency
   shop.ts                       # createOrUpdateShop() — the only code that writes to `shops`
-  env.ts                        # requireEnv() — fail-fast env var validation
-  validation.ts                 # isValidEmail(), ORDER_STATUSES, validateOrderPayload()
+  env.ts / env-validation.ts    # requireEnv() + startup-time required-var checks
+  validation.ts                 # isValidEmail(), ORDER_STATUSES, validateOrderPayload(), id parsing
+  rate-limit.ts                 # in-memory, per-instance fixed-window limiter
+  logger.ts                     # structured logging + audit events
   utils.ts                      # cn() Tailwind class helper
 
 types/
-  order.ts / product.ts         # shapes returned by the Supabase queries/RPCs
+  order.ts / product.ts / shop.ts / workflow.ts   # shapes returned by Supabase queries/RPCs
+
+tests/
+  unit/ · supabase/ · server-actions/ · webhook/ · workflows/ · connectors/ · modules/ · integration/
+  mocks/                        # hand-built chainable Supabase mock + fetch mock
 
 supabase/schema.sql             # the entire database schema — single source of truth
 apps-script/sync-orders.gs      # reference copy of the Apps Script bound to the Sheet template

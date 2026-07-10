@@ -2,28 +2,31 @@
 
 import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { provisionShopSpreadsheet, appendOrderRows } from "@/lib/google-sheets";
-import {
-  testShopifyConnection,
-  fetchAllShopifyProducts,
-  fetchNewShopifyOrders,
-} from "@/lib/shopify";
+import { provisionShopSpreadsheet } from "@/lib/google-sheets";
+import { getConnector, SUPPORTED_PLATFORMS } from "@/lib/platforms";
 import { isValidEmail } from "@/lib/validation";
 import { createOrUpdateShop } from "@/lib/shop";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { syncShopProducts, syncShopOrders, toPlatformCredentials, type ShopForSync } from "@/lib/sync";
 
 export async function connectShop(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
+  const platform = String(formData.get("platform") ?? "").trim();
   const storeUrl = String(formData.get("store_url") ?? "").trim();
-  const accessToken = String(formData.get("access_token") ?? "").trim();
+  const apiKey = String(formData.get("api_key") ?? "").trim();
+  const apiSecret = String(formData.get("api_secret") ?? "").trim();
   const ownerEmail = String(formData.get("owner_email") ?? "").trim();
 
-  if (!name || !storeUrl || !accessToken || !ownerEmail) {
+  if (!name || !platform || !storeUrl || !apiKey || !ownerEmail) {
     redirect(
       `/shops/connect?error=${encodeURIComponent(
-        "Shop name, store URL, access token, and owner email are all required."
+        "Shop name, platform, store URL, API key, and owner email are all required."
       )}`
     );
+  }
+
+  if (!SUPPORTED_PLATFORMS.includes(platform)) {
+    redirect(`/shops/connect?error=${encodeURIComponent("Unsupported platform.")}`);
   }
 
   if (!isValidEmail(ownerEmail)) {
@@ -44,15 +47,16 @@ export async function connectShop(formData: FormData) {
   let shopId: number;
 
   try {
-    const sheet = await provisionShopSpreadsheet(name, "Shopify", ownerEmail);
+    const sheet = await provisionShopSpreadsheet(name, platform, ownerEmail);
     const shop = await createOrUpdateShop({
       name,
-      platform: "Shopify",
+      platform,
       sheetId: sheet.id,
       sheetName: sheet.name,
       userId: user.id,
-      shopifyStoreUrl: storeUrl,
-      shopifyAccessToken: accessToken,
+      storeUrl,
+      apiKey,
+      ...(apiSecret && { apiSecret }),
     });
     shopId = shop.id;
   } catch (err) {
@@ -67,13 +71,12 @@ export async function connectShop(formData: FormData) {
   redirect(`/shops/connect?shop_id=${shopId}`);
 }
 
-// Fetching the shop's Shopify credentials stays on the service-role client
-// (per the "keep service role for Shopify sync" instruction), but the
-// ownership check below is what stops one logged-in user from triggering a
-// sync against a shop_id that isn't theirs just by submitting a different
-// number — without it, this would be exactly the IDOR the RLS policies on
-// shops/orders/products exist to prevent everywhere else.
-async function getShopifyCredentials(shopId: string) {
+// Fetching the shop's credentials stays on the service-role client (per the
+// "keep service role for platform sync" architecture), but the ownership
+// check below is what stops one logged-in user from triggering a sync
+// against a shop_id that isn't theirs just by submitting a different number.
+//
+async function getShopCredentials(shopId: string): Promise<ShopForSync | null> {
   const userSupabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -85,157 +88,131 @@ async function getShopifyCredentials(shopId: string) {
 
   const { data: shop, error } = await supabase
     .from("shops")
-    .select("id, user_id, sheet_id, shopify_store_url, shopify_access_token, shopify_last_synced_at")
+    .select("id, user_id, platform, sheet_id, store_url, api_key, api_secret, last_synced_at")
     .eq("id", shopId)
     .single();
 
-  if (
-    error ||
-    !shop ||
-    shop.user_id !== user.id ||
-    !shop.shopify_store_url ||
-    !shop.shopify_access_token
-  ) {
+  if (error || !shop || shop.user_id !== user.id || !shop.store_url || !shop.api_key) {
     return null;
   }
 
   return shop;
 }
 
+// Unchanged implementation — only the redirect target is now configurable,
+// the same "redirect_to" convention syncProducts/syncOrders below already
+// use. This is what lets /shops and /shops/[id] trigger the exact same
+// Test Connection instead of a second copy of it.
 export async function testConnection(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
-  const shop = await getShopifyCredentials(shopId);
+  const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+  const shop = await getShopCredentials(shopId);
 
   if (!shop) {
-    redirect(`/shops/connect?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
+    redirect(`${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
   }
 
-  const ok = await testShopifyConnection(shop.shopify_store_url!, shop.shopify_access_token!);
+  const connector = getConnector(shop.platform);
+  const ok = await connector.testConnection(toPlatformCredentials(shop));
 
-  redirect(`/shops/connect?shop_id=${shopId}&test=${ok ? "success" : "failed"}`);
+  redirect(`${redirectTo}?shop_id=${shopId}&test=${ok ? "success" : "failed"}`);
 }
 
-export async function syncProducts(formData: FormData) {
+// Reconnecting an existing (disconnected) shop is deliberately NOT
+// connectShop() called again: connectShop's whole job includes provisioning
+// a brand-new Google Sheet, which would be wrong here — this shop already
+// has one. Reconnecting only needs to refill the 3 credential columns
+// disconnectStore() nulled out, so a direct update via the user-scoped
+// client is enough — same RLS policy, same pattern as updateShopName.
+export async function reconnectShop(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
-  const shop = await getShopifyCredentials(shopId);
+  const platform = String(formData.get("platform") ?? "").trim();
+  const storeUrl = String(formData.get("store_url") ?? "").trim();
+  const apiKey = String(formData.get("api_key") ?? "").trim();
+  const apiSecret = String(formData.get("api_secret") ?? "").trim();
 
-  if (!shop) {
-    redirect(`/shops/connect?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
-  }
-
-  let syncedCount: number;
-
-  try {
-    const shopifyProducts = await fetchAllShopifyProducts(
-      shop.shopify_store_url!,
-      shop.shopify_access_token!
-    );
-
-    const rows = shopifyProducts.map((product) => {
-      const variant = product.variants?.[0];
-      return {
-        shop_id: Number(shopId),
-        shopify_product_id: String(product.id),
-        name: product.title,
-        sku: variant?.sku ?? null,
-        description: product.body_html ? product.body_html.replace(/<[^>]*>/g, "").trim() : null,
-        price: variant?.price ? Number(variant.price) : null,
-        stock_quantity: variant?.inventory_quantity ?? null,
-      };
-    });
-
-    if (rows.length > 0) {
-      const { error } = await supabase
-        .from("products")
-        .upsert(rows, { onConflict: "shopify_product_id" });
-
-      if (error) {
-        throw error;
-      }
-    }
-
-    syncedCount = rows.length;
-  } catch (err) {
-    console.error("syncProducts failed:", err);
+  if (!platform || !storeUrl || !apiKey) {
     redirect(
-      `/shops/connect?shop_id=${shopId}&error=${encodeURIComponent(
-        "Could not sync products from Shopify. Check the store URL and access token, then try again."
+      `/shops/connect?reconnect=${shopId}&error=${encodeURIComponent(
+        "Platform, store URL, and API key are required."
       )}`
     );
   }
 
-  redirect(`/shops/connect?shop_id=${shopId}&products_synced=${syncedCount}`);
+  if (!SUPPORTED_PLATFORMS.includes(platform)) {
+    redirect(`/shops/connect?reconnect=${shopId}&error=${encodeURIComponent("Unsupported platform.")}`);
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("shops")
+    .update({
+      platform,
+      store_url: storeUrl,
+      api_key: apiKey,
+      api_secret: apiSecret || null,
+      credentials_changed_at: new Date().toISOString(),
+    })
+    .eq("id", shopId);
+
+  if (error) {
+    console.error("reconnectShop failed:", error);
+    redirect(
+      `/shops/connect?reconnect=${shopId}&error=${encodeURIComponent("Could not reconnect the store.")}`
+    );
+  }
+
+  // Lands back in the same "shop_id" success branch /shops/connect/page.tsx
+  // already renders after a fresh connectShop() — Test Connection/Sync
+  // Products/Sync Orders action cards, with no new UI needed for this path.
+  redirect(`/shops/connect?shop_id=${shopId}`);
+}
+
+// This Server Action and the /api/cron/sync route handler are the only two
+// callers of syncShopProducts() — same for syncOrders() below. Everything
+// that actually talks to the platform API, writes products, or records
+// sync_history lives once in lib/sync.ts; this function's only job is the
+// form-specific part (authorize the submitted shop_id, then redirect).
+export async function syncProducts(formData: FormData) {
+  const shopId = String(formData.get("shop_id") ?? "");
+  const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+  const shop = await getShopCredentials(shopId);
+
+  if (!shop) {
+    redirect(`${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
+  }
+
+  const result = await syncShopProducts(shop);
+
+  if (!result.success) {
+    redirect(
+      `${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent(
+        "Could not sync products. Check the store URL and access token, then try again."
+      )}`
+    );
+  }
+
+  redirect(`${redirectTo}?shop_id=${shopId}&products_synced=${result.count}`);
 }
 
 export async function syncOrders(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
-  const shop = await getShopifyCredentials(shopId);
+  const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+  const shop = await getShopCredentials(shopId);
 
   if (!shop) {
-    redirect(`/shops/connect?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
+    redirect(`${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Shop not found.")}`);
   }
 
-  let syncedCount: number;
+  const result = await syncShopOrders(shop);
 
-  try {
-    const orders = await fetchNewShopifyOrders(
-      shop.shopify_store_url!,
-      shop.shopify_access_token!,
-      shop.shopify_last_synced_at
-    );
-
-    const rows = orders.flatMap((order) =>
-      order.line_items.map((item) => [
-        [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") ||
-          order.shipping_address?.name ||
-          "",
-        order.customer?.phone ?? order.shipping_address?.phone ?? "",
-        order.shipping_address?.city ?? "",
-        order.shipping_address?.address1 ?? "",
-        item.title,
-        item.quantity,
-        item.price,
-      ])
-    );
-
-    if (rows.length > 0 && shop.sheet_id) {
-      await appendOrderRows(shop.sheet_id, rows);
-    }
-
-    // Cursor = the newest created_at Shopify actually returned, not
-    // wall-clock "now" — using "now" could silently drop any order created
-    // between the fetch and this update (it would fall after the cursor
-    // without ever having been included in a fetched batch). Advance one
-    // second past that newest timestamp so the next sync's created_at_min
-    // (which Shopify treats as inclusive) doesn't refetch the same order.
-    // If Shopify returned nothing new, the cursor is left untouched.
-    const newestCreatedAt = orders.reduce<string | null>(
-      (latest, order) => (!latest || order.created_at > latest ? order.created_at : latest),
-      null
-    );
-
-    if (newestCreatedAt) {
-      const nextCursor = new Date(new Date(newestCreatedAt).getTime() + 1000).toISOString();
-
-      const { error } = await supabase
-        .from("shops")
-        .update({ shopify_last_synced_at: nextCursor })
-        .eq("id", shopId);
-
-      if (error) {
-        throw error;
-      }
-    }
-
-    syncedCount = rows.length;
-  } catch (err) {
-    console.error("syncOrders failed:", err);
+  if (!result.success) {
     redirect(
-      `/shops/connect?shop_id=${shopId}&error=${encodeURIComponent(
+      `${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent(
         "Could not sync orders to the Google Sheet. Check the store credentials and that the sheet still exists, then try again."
       )}`
     );
   }
 
-  redirect(`/shops/connect?shop_id=${shopId}&orders_synced=${syncedCount}`);
+  redirect(`${redirectTo}?shop_id=${shopId}&orders_synced=${result.count}`);
 }
