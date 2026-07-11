@@ -51,6 +51,10 @@ describe("computeWorkflowHealth", () => {
   it("is offline when every recent execution failed", () => {
     expect(computeWorkflowHealth([{ status: "failed" }, { status: "failed" }])).toBe("offline");
   });
+
+  it("is healthy when every recent execution succeeded", () => {
+    expect(computeWorkflowHealth([{ status: "success" }, { status: "success" }])).toBe("healthy");
+  });
 });
 
 describe("computePlatformConnectorsHealth", () => {
@@ -81,6 +85,15 @@ describe("computePlatformConnectorsHealth", () => {
       ])
     ).toBe("warning");
   });
+
+  it("is healthy when every connected shop's last sync succeeded", () => {
+    expect(
+      computePlatformConnectorsHealth([
+        { store_url: "https://a.myshopify.com", last_sync_status: "success" },
+        { store_url: "https://b.myshopify.com", last_sync_status: "success" },
+      ])
+    ).toBe("healthy");
+  });
 });
 
 describe("computeCronHealth", () => {
@@ -88,6 +101,14 @@ describe("computeCronHealth", () => {
     expect(computeCronHealth([{ store_url: null, auto_sync_enabled: true, nextSyncAt: null }])).toBe(
       "healthy"
     );
+  });
+
+  it("treats an eligible shop with no computed nextSyncAt as not overdue", () => {
+    expect(
+      computeCronHealth([
+        { store_url: "https://a.myshopify.com", auto_sync_enabled: true, nextSyncAt: null },
+      ])
+    ).toBe("healthy");
   });
 
   it("is healthy when nothing is overdue", () => {

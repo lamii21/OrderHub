@@ -29,6 +29,7 @@ export type MockQueryBuilder = {
   lt: MockFn;
   lte: MockFn;
   in: MockFn;
+  is: MockFn;
   not: MockFn;
   order: MockFn;
   limit: MockFn;
@@ -80,6 +81,7 @@ function makeBuilder(table: string, queue: QueryResult[], index: { n: number }):
     "lt",
     "lte",
     "in",
+    "is",
     "not",
     "order",
     "limit",

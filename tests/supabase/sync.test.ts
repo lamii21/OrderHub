@@ -122,6 +122,28 @@ describe("syncShopProducts", () => {
       expect.objectContaining({ last_sync_attempt_at: expect.any(String) })
     );
   });
+
+  it("records a failure with a safe fixed message when the products upsert itself returns a database error", async () => {
+    getConnector.mockReturnValue({
+      fetchProducts: vi.fn().mockResolvedValue([
+        { platformProductId: "1", name: "Mug", sku: null, description: null, price: 10, stockQuantity: 5 },
+      ]),
+    });
+    const { client } = createMockSupabase({
+      responses: {
+        products: { data: null, error: { message: "duplicate key value violates unique constraint" } },
+        shops: { data: null, error: null },
+      },
+    });
+    holder.client = client;
+
+    const result = await syncShopProducts(baseShop);
+
+    expect(result).toEqual({ success: false, count: 0 });
+    const call = recordSyncHistory.mock.calls[0][0];
+    expect(call.status).toBe("failed");
+    expect(call.message).not.toContain("unique constraint");
+  });
 });
 
 describe("syncShopOrders", () => {
@@ -168,6 +190,33 @@ describe("syncShopOrders", () => {
 
     expect(result).toEqual({ success: true, count: 0 });
     expect(appendOrderRows).not.toHaveBeenCalled();
+  });
+
+  it("records a failure with a safe fixed message when advancing the sync cursor itself returns a database error", async () => {
+    getConnector.mockReturnValue({
+      fetchOrders: vi.fn().mockResolvedValue([
+        {
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lines: [{ customerName: "A", customerPhone: "", customerCity: "", customerAddress: "", product: "P", quantity: 1, price: 1 }],
+        },
+      ]),
+    });
+    const { client } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: null, error: { message: "constraint violation" } }, // the cursor update itself
+          { data: null, error: null }, // markAttempted, in the catch block
+        ],
+      },
+    });
+    holder.client = client;
+
+    const result = await syncShopOrders(baseShop);
+
+    expect(result).toEqual({ success: false, count: 0 });
+    const call = recordSyncHistory.mock.calls[0][0];
+    expect(call.status).toBe("failed");
+    expect(call.message).not.toContain("constraint violation");
   });
 
   it("skips the sheet append when the shop has no sheet_id, but still succeeds", async () => {

@@ -61,6 +61,12 @@ describe("POST /api/orders — authentication", () => {
   });
 
   it("rejects a request with the wrong x-api-key", async () => {
+    // A non-null key first goes through findShopByWebhookSecret's lookup
+    // (it returns null here — no shop's webhook_secret matches) before
+    // falling through to the global-secret check that actually rejects it.
+    const { client } = createMockSupabase({ responses: { shops: { data: null, error: null } } });
+    holder.client = client;
+
     const response = await POST(makeRequest(VALID_PAYLOAD, "wrong-secret"));
     expect(response.status).toBe(401);
   });
@@ -69,6 +75,7 @@ describe("POST /api/orders — authentication", () => {
     createOrUpdateShop.mockResolvedValue({ id: 1 });
     const { client } = createMockSupabase({
       responses: {
+        shops: { data: null, error: null },
         products: { data: null, error: null },
         orders: { data: { id: 1, shop_id: 1 }, error: null },
       },
@@ -77,6 +84,76 @@ describe("POST /api/orders — authentication", () => {
 
     const response = await POST(makeRequest(VALID_PAYLOAD, "test-api-secret"));
     expect(response.status).not.toBe(401);
+  });
+});
+
+// Regression tests for the per-shop webhook secret fix (Architecture
+// Review: "one shared webhook secret is also the only tenant boundary").
+// A shop's own webhook_secret is an additive, backward-compatible
+// alternative to the one global API_SECRET — every test above already
+// proves the legacy path is untouched; these prove the new path actually
+// resolves to the right shop and skips createOrUpdateShop entirely.
+describe("POST /api/orders — per-shop webhook secret", () => {
+  it("resolves the shop directly from webhook_secret, without calling createOrUpdateShop", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: { data: { id: 42 }, error: null },
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 42 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    const response = await POST(makeRequest(VALID_PAYLOAD, "shop-42-own-secret"));
+    const json = await response.json();
+
+    expect(json.success).toBe(true);
+    expect(createOrUpdateShop).not.toHaveBeenCalled();
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("webhook_secret", "shop-42-own-secret");
+    // The order was written against the shop the secret resolved to.
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ shop_id: 42 }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("does not require API_SECRET to be configured when a per-shop secret matches", async () => {
+    const originalSecret = process.env.API_SECRET;
+    delete process.env.API_SECRET;
+
+    try {
+      const { client } = createMockSupabase({
+        responses: {
+          shops: { data: { id: 7 }, error: null },
+          products: { data: null, error: null },
+          orders: { data: { id: 1, shop_id: 7 }, error: null },
+        },
+      });
+      holder.client = client;
+
+      const response = await POST(makeRequest(VALID_PAYLOAD, "shop-7-own-secret"));
+      expect(response.status).toBe(200);
+    } finally {
+      process.env.API_SECRET = originalSecret;
+    }
+  });
+
+  it("falls through to the legacy global-secret + sheet_id flow when no shop matches the provided key", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: { data: null, error: null }, // no shop has this as its webhook_secret
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    const response = await POST(makeRequest(VALID_PAYLOAD, "test-api-secret"));
+
+    expect(response.status).toBe(200);
+    expect(createOrUpdateShop).toHaveBeenCalledTimes(1);
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("webhook_secret", "test-api-secret");
   });
 });
 
@@ -247,6 +324,24 @@ describe("POST /api/orders — order.created dispatch", () => {
 
     expect(builders.orders[0].upsert).toHaveBeenCalledWith(
       expect.objectContaining({ product_id: 77 }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("includes an explicit status field when the payload provides one", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest({ ...VALID_PAYLOAD, status: "confirmed" }));
+
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "confirmed" }),
       { onConflict: "shop_id,order_id", ignoreDuplicates: true }
     );
   });

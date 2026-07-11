@@ -1,5 +1,6 @@
 import { getModuleCredentials } from "./credentials";
 import { fetchWithTimeout, isTimeoutError } from "./http";
+import { assertPublicHttpUrl, UnsafeUrlError } from "@/lib/net-guard";
 import type { AutomationModule, ModuleResult } from "./types";
 import type { Order } from "@/types/order";
 
@@ -32,6 +33,12 @@ const carriers: Record<string, DeliveryCarrier> = {
       }
 
       try {
+        // module_credentials has no Server Action that writes it yet (rows
+        // are provisioned by hand — see credentials.ts), so there's no
+        // config-save moment to validate this URL at; this run-time check,
+        // including DNS resolution, is the only enforcement point.
+        await assertPublicHttpUrl(rawCredentials.webhookUrl);
+
         const response = await fetchWithTimeout(rawCredentials.webhookUrl, {
           method: "POST",
           headers: {
@@ -72,9 +79,12 @@ const carriers: Record<string, DeliveryCarrier> = {
         console.error("deliveryModule: generic-webhook request failed:", err);
         return {
           success: false,
-          message: isTimeoutError(err)
-            ? "Delivery request timed out."
-            : "Delivery request failed (network error).",
+          message:
+            err instanceof UnsafeUrlError
+              ? "Delivery webhook URL is not allowed (points at a private or internal address)."
+              : isTimeoutError(err)
+                ? "Delivery request timed out."
+                : "Delivery request failed (network error).",
         };
       }
     },

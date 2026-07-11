@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
-import { EVENT_TYPES } from "@/lib/events/types";
+import { EVENT_TYPES, getEventTypeLabel } from "@/lib/events/types";
 import { createWorkflow } from "../actions";
 
 // Deliberately 2 fields — a workflow's steps are configured on its own
@@ -46,7 +46,7 @@ export default async function NewWorkflowPage({
           >
             {EVENT_TYPES.map((eventType) => (
               <option key={eventType} value={eventType}>
-                {eventType}
+                {getEventTypeLabel(eventType)}
               </option>
             ))}
           </select>

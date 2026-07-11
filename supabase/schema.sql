@@ -1312,8 +1312,11 @@ create policy "Users can view executions for their own workflows"
 -- orders), nothing here changes an existing column's meaning.
 
 -- Per-shop credentials for modules that call an external API (WhatsApp,
--- Delivery, Email today; SMS/Slack/CRM/ERP once implemented). Configured
--- once per shop, not re-entered per workflow step — the same principle
+-- Delivery, Email, SMS, ERP, CRM, AI Agent — Slack and Webhook instead
+-- take their destination URL as per-step config, since a webhook URL
+-- already scopes itself to one workspace/channel, unlike an API key;
+-- ERP/CRM's endpoint is likewise per-step config, with only an optional
+-- API key here). Configured once per shop, not re-entered per workflow step — the same principle
 -- already applied to platform credentials (shops.api_key/api_secret).
 -- credentials is opaque JSON: its shape is entirely up to the module that
 -- reads it, so adding a field to one module's credentials never needs a
@@ -1432,6 +1435,7 @@ returns table (
   execution_count bigint,
   success_count bigint,
   failure_count bigint,
+  avg_duration_ms numeric,
   last_execution_at timestamptz,
   last_execution_status text,
   created_at timestamptz
@@ -1449,7 +1453,8 @@ as $$
       workflow_id,
       count(*) as execution_count,
       count(*) filter (where status = 'success') as success_count,
-      count(*) filter (where status = 'failed') as failure_count
+      count(*) filter (where status = 'failed') as failure_count,
+      avg(duration_ms) as avg_duration_ms
     from workflow_executions
     group by workflow_id
   )
@@ -1464,6 +1469,7 @@ as $$
     coalesce(es.execution_count, 0) as execution_count,
     coalesce(es.success_count, 0) as success_count,
     coalesce(es.failure_count, 0) as failure_count,
+    es.avg_duration_ms,
     -- Same fix as get_shops_with_stats()'s last_sync fields: one LATERAL
     -- join finds the most recent workflow_executions row once, instead of
     -- two separate correlated subqueries each re-finding that same row to
@@ -1568,3 +1574,249 @@ alter table workflow_executions add constraint workflow_executions_order_id_fkey
 -- order_history.changed_by (uuid, references auth.users(id)) had no
 -- supporting index — every other foreign key column in this schema does.
 create index if not exists order_history_changed_by_idx on order_history (changed_by);
+
+-- ==== Architecture review fixes ====
+
+-- Circuit breaker's isCircuitOpen() (lib/workflows/circuit-breaker.ts)
+-- filters on (workflow_id, step_order, module_name) together — the
+-- composite index added during the earlier hardening phase only covered
+-- (workflow_id, step_order, started_at desc), predating module_name being
+-- added to that query to fix the circuit breaker identity bug. Replacing
+-- it with a version that includes module_name lets Postgres satisfy the
+-- entire filter from the index alone instead of scanning every row for a
+-- (workflow_id, step_order) pair and checking module_name as a residual
+-- predicate on each one.
+drop index if exists workflow_executions_workflow_step_idx;
+create index if not exists workflow_executions_workflow_step_module_idx
+  on workflow_executions (workflow_id, step_order, module_name, started_at desc);
+
+-- orders.shop_id / products.shop_id are set by every current write path
+-- (the webhook, platform sync) and never left null in practice, but the
+-- column itself still allowed it — a row that ever ended up with a null
+-- shop_id would be invisible under every RLS policy that scopes via
+-- "shop_id in (select id from shops where user_id = ...)" (Postgres's
+-- "NULL IN (...)" is NULL, never true), recoverable only via the
+-- service-role client. Promoting the existing application invariant to a
+-- real constraint turns that silent, hard-to-diagnose data-loss scenario
+-- into an immediate, loud insert-time error instead.
+--
+-- If either statement below ever fails on an existing database, it means
+-- a row with a null shop_id genuinely exists and needs manual
+-- investigation (assign it to the correct shop, or delete it if orphaned)
+-- before this constraint can be applied — do not work around that by
+-- relaxing this back to nullable.
+alter table orders alter column shop_id set not null;
+alter table products alter column shop_id set not null;
+
+-- ==== Per-shop webhook secret ====
+-- POST /api/orders previously trusted a single global API_SECRET shared by
+-- every shop's Google Apps Script deployment, with the request's shop
+-- resolved purely from client-supplied sheet_id — meaning anyone who has
+-- (or leaks, or guesses) that one secret can write orders against any shop
+-- whose sheet_id they know, or create unlimited new phantom shops by
+-- omitting sheet_id entirely (a null sheet_id never collides with another
+-- null under the unique index). This column gives each shop its own
+-- secret as an additive, backward-compatible alternative:
+-- app/api/orders/route.ts tries matching x-api-key against a shop's own
+-- webhook_secret first, and only falls back to the global API_SECRET +
+-- sheet_id resolution (unchanged) when no shop matches — so every existing
+-- Apps Script deployment using the old shared secret keeps working exactly
+-- as before with zero action required, while a shop that switches its Apps
+-- Script to send its own webhook_secret gets a hard per-tenant boundary
+-- instead of a shared one.
+--
+-- Generated from 2 concatenated gen_random_uuid() calls (unique,
+-- unguessable, 244 bits of randomness) — built entirely from PostgreSQL's
+-- own core, no pgcrypto/extension dependency. For a volatile default like
+-- this, "add column" backfills every existing row with its own
+-- freshly-generated value (not one value computed once and shared), so
+-- every pre-existing shop gets a real, distinct secret too.
+alter table shops add column if not exists webhook_secret text unique
+  default (replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''));
+
+-- get_shops_with_stats() improved further: last_success_sync_at/
+-- last_failed_sync_at were 2 separate correlated subqueries each scanning
+-- sync_history for this shop; last_products_imported_count/
+-- last_orders_imported_count were 2 more. Same fix as the last_sync
+-- LATERAL added during the earlier hardening phase — group each pair into
+-- one LATERAL that computes both columns from a single scan, using FILTER
+-- for the success/failure split and DISTINCT ON (per type) + FILTER for
+-- the per-type latest imported_count. Output is identical; this only
+-- changes how many times sync_history is scanned per shop row (5 separate
+-- lookups before this file's changes, 3 LATERAL joins now).
+create or replace function get_shops_with_stats()
+returns table (
+  id bigint,
+  name text,
+  platform text,
+  sheet_id text,
+  sheet_name text,
+  store_url text,
+  sync_frequency text,
+  last_sync_attempt_at timestamptz,
+  last_sync_status text,
+  last_success_sync_at timestamptz,
+  last_failed_sync_at timestamptz,
+  last_sync_duration_ms integer,
+  last_sync_message text,
+  last_products_imported_count integer,
+  last_orders_imported_count integer,
+  currency text,
+  timezone text,
+  sync_products_enabled boolean,
+  sync_orders_enabled boolean,
+  auto_sync_enabled boolean,
+  email_notifications_enabled boolean,
+  created_at timestamptz,
+  product_count bigint,
+  order_count bigint,
+  total_revenue numeric
+)
+language sql
+stable
+as $$
+  with product_counts as (
+    select shop_id, count(*) as product_count
+    from products
+    group by shop_id
+  ),
+  order_stats as (
+    select shop_id, count(*) as order_count, coalesce(sum(price * quantity), 0) as total_revenue
+    from orders
+    group by shop_id
+  )
+  select
+    s.id,
+    s.name,
+    s.platform,
+    s.sheet_id,
+    s.sheet_name,
+    s.store_url,
+    s.sync_frequency,
+    s.last_sync_attempt_at,
+    last_sync.status as last_sync_status,
+    sync_success_stats.last_success_sync_at,
+    sync_success_stats.last_failed_sync_at,
+    last_sync.duration_ms as last_sync_duration_ms,
+    last_sync.message as last_sync_message,
+    latest_import_counts.last_products_imported_count,
+    latest_import_counts.last_orders_imported_count,
+    s.currency,
+    s.timezone,
+    s.sync_products_enabled,
+    s.sync_orders_enabled,
+    s.auto_sync_enabled,
+    s.email_notifications_enabled,
+    s.created_at,
+    coalesce(pc.product_count, 0) as product_count,
+    coalesce(os.order_count, 0) as order_count,
+    coalesce(os.total_revenue, 0) as total_revenue
+  from shops s
+  left join product_counts pc on pc.shop_id = s.id
+  left join order_stats os on os.shop_id = s.id
+  left join lateral (
+    select sh.status, sh.duration_ms, sh.message
+    from sync_history sh
+    where sh.shop_id = s.id
+    order by sh.started_at desc
+    limit 1
+  ) last_sync on true
+  left join lateral (
+    select
+      max(sh.started_at) filter (where sh.status = 'success') as last_success_sync_at,
+      max(sh.started_at) filter (where sh.status = 'failed') as last_failed_sync_at
+    from sync_history sh
+    where sh.shop_id = s.id
+  ) sync_success_stats on true
+  left join lateral (
+    select
+      max(latest.imported_count) filter (where latest.type = 'products') as last_products_imported_count,
+      max(latest.imported_count) filter (where latest.type = 'orders') as last_orders_imported_count
+    from (
+      select distinct on (sh.type) sh.type, sh.imported_count
+      from sync_history sh
+      where sh.shop_id = s.id
+      order by sh.type, sh.started_at desc
+    ) latest
+  ) latest_import_counts on true
+  order by s.created_at desc;
+$$;
+
+grant execute on function get_shops_with_stats() to authenticated;
+
+-- ==== Automation retry / resume ====
+-- See lib/workflows/resume.ts and lib/workflows/retry.ts.
+
+-- Backs getBackoffEligiblePairs()'s recurring scan for recent failures
+-- (status = 'failed' and started_at >= some rolling window) — run
+-- automatically every 5 minutes forever by the automation-retry cron, and
+-- once per click by the Admin Center's manual "Retry Failed Executions".
+-- Before this, that query could only use the single-column started_at
+-- index and filter status as a residual predicate; workflow_executions is
+-- explicitly unbounded (an append-only log with no cleanup job), so a scan
+-- that degrades with total table size rather than with the size of the
+-- actual failure backlog is worth avoiding on a query this frequent.
+create index if not exists workflow_executions_status_started_at_idx
+  on workflow_executions (status, started_at desc);
+
+-- One row per pending pause requested by a "waiting" ModuleResult.outcome
+-- (Delay today; any future module that returns "waiting" tomorrow) — a
+-- dedicated table, not new columns on workflow_executions. That table is an
+-- append-only per-step attempt *log*; a pending wait is the opposite shape,
+-- a single mutable record that gets consumed once, so mixing the two would
+-- overload workflow_executions.status (currently a strict success/failed
+-- CHECK) with a third, structurally different meaning. Rows are never
+-- deleted, only marked consumed_at — same "keep the audit trail" precedent
+-- as sync_history/workflow_executions, both of which have no cleanup job
+-- either.
+create table if not exists workflow_waits (
+  id bigint generated always as identity primary key,
+  workflow_id bigint not null references workflows(id) on delete cascade,
+  order_id bigint not null references orders(id) on delete cascade,
+  -- The step to resume AT (not the step that requested the wait) — a
+  -- stable id, not the step_order that was current when the wait was
+  -- created. step_order is reassigned by moveWorkflowStepUp/Down and
+  -- renumberSteps (see circuit-breaker.ts's own comment on the exact same
+  -- instability), and a workflow stays editable while a wait is pending —
+  -- resuming by a snapshotted step_order could land on a completely
+  -- different step than the one that actually requested the pause.
+  -- Nullable, set null on delete: if the target step is removed before the
+  -- wait becomes due, the resume cron detects that (rather than resuming
+  -- into whatever step was renumbered into its old position) and gives up
+  -- on that one pause instead of silently running the wrong step.
+  resume_step_id bigint references workflow_steps(id) on delete set null,
+  -- WorkflowContext accumulated up to and including the waiting step's own
+  -- result.data, so a step after the resume point can still read what an
+  -- earlier step produced, exactly as if the run had never paused.
+  context jsonb not null default '{}'::jsonb,
+  resume_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  -- Doubles as the idempotency guard: the resume cron only claims a row by
+  -- updating this from null to now() with an `is null` predicate in the
+  -- same statement (optimistic concurrency, same shape as
+  -- swapStepOrder()'s sentinel-park technique) — two overlapping cron
+  -- invocations can both select the same due row, but only one can win the
+  -- claim, so a workflow is never resumed twice from the same pause.
+  consumed_at timestamptz
+);
+
+create index if not exists workflow_waits_due_idx
+  on workflow_waits (resume_at) where consumed_at is null;
+create index if not exists workflow_waits_workflow_id_idx on workflow_waits (workflow_id);
+create index if not exists workflow_waits_order_id_idx on workflow_waits (order_id);
+
+alter table workflow_waits enable row level security;
+
+-- Select-only for `authenticated`, same split as workflow_executions: only
+-- the service-role client (the resume cron) ever writes this table.
+grant select on workflow_waits to authenticated;
+
+drop policy if exists "Users can view waits for their own workflows" on workflow_waits;
+create policy "Users can view waits for their own workflows"
+  on workflow_waits for select
+  to authenticated
+  using (
+    workflow_id in (
+      select id from workflows where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );

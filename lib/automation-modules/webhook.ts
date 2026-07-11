@@ -1,4 +1,5 @@
 import { fetchWithTimeout, isTimeoutError } from "./http";
+import { checkUrlSafetySync, assertPublicHttpUrl, UnsafeUrlError } from "@/lib/net-guard";
 import type { AutomationModule } from "./types";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -35,6 +36,19 @@ export const webhookModule: AutomationModule = {
       return "Webhook requires a valid http(s) URL.";
     }
 
+    // url is already confirmed parseable with an http(s) protocol above, so
+    // this can only fail here on the private-IP/blocked-host checks — a
+    // genuinely new rejection, not a reworded version of the check above.
+    // Only the synchronous subset of the SSRF check (a literal private IP,
+    // not a hostname that merely resolves to one) runs here —
+    // validateConfig() is a synchronous contract (see types.ts), so that
+    // case can't be caught until run() below, which does the full
+    // DNS-resolving check right before the actual request.
+    const unsafeReason = checkUrlSafetySync(url);
+    if (unsafeReason) {
+      return `Webhook URL is not allowed: ${unsafeReason}`;
+    }
+
     if (method !== undefined && !ALLOWED_METHODS.includes(method.toUpperCase())) {
       return `Webhook method must be one of: ${ALLOWED_METHODS.join(", ")}.`;
     }
@@ -50,6 +64,12 @@ export const webhookModule: AutomationModule = {
     const { url, method, headers } = config as WebhookConfig;
 
     try {
+      // Full SSRF check, including DNS resolution, right before the
+      // request — validateConfig() above only caught the synchronous
+      // cases at save time. A config saved before this check existed, or
+      // one whose hostname now resolves differently, is still caught here.
+      await assertPublicHttpUrl(url);
+
       const response = await fetchWithTimeout(
         url,
         {
@@ -79,7 +99,12 @@ export const webhookModule: AutomationModule = {
       console.error("webhookModule: request failed:", err);
       return {
         success: false,
-        message: isTimeoutError(err) ? "Webhook request timed out." : "Webhook request failed (network error).",
+        message:
+          err instanceof UnsafeUrlError
+            ? "Webhook URL is not allowed (points at a private or internal address)."
+            : isTimeoutError(err)
+              ? "Webhook request timed out."
+              : "Webhook request failed (network error).",
       };
     }
   },

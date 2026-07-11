@@ -108,4 +108,47 @@ describe("applyOrderStatusChange", () => {
 
     expect(result.outcome).toBe("updated");
   });
+
+  // Regression test for the optimistic-concurrency fix: the update is now
+  // guarded by .eq("status", previousStatus) in addition to .eq("id", ...).
+  it("guards the update with the previously-read status, not just the id", async () => {
+    const updatedOrder = { id: 1, status: "shipped", shop_id: 7, shops: null };
+    const { client, builders } = createMockSupabase({
+      responses: {
+        orders: [
+          { data: { status: "confirmed" }, error: null },
+          { data: updatedOrder, error: null },
+        ],
+        order_history: { data: null, error: null },
+      },
+    });
+
+    await applyOrderStatusChange(client as never, 1, "shipped", "user-1");
+
+    expect(builders.orders[1].eq).toHaveBeenCalledWith("id", 1);
+    expect(builders.orders[1].eq).toHaveBeenCalledWith("status", "confirmed");
+  });
+
+  // Regression test for the actual race this guard closes: a concurrent
+  // write (another tab, the Update Status module) already moved the order
+  // off the status this call read, between the read and this write. The
+  // guarded .eq("status", ...) predicate then matches zero rows, and
+  // .single() turns that into the same error PostgREST already raises for
+  // an RLS-blocked update — no silent, wrong-audit-trail "success".
+  it("reports 'error' (not a silent success) when a concurrent write already changed the status", async () => {
+    const { client } = createMockSupabase({
+      responses: {
+        orders: [
+          { data: { status: "confirmed" }, error: null },
+          // Simulates PostgREST's .single() response when the guarded
+          // update matched zero rows: an error, no data.
+          { data: null, error: { message: "JSON object requested, multiple (or no) rows returned" } },
+        ],
+      },
+    });
+
+    const result = await applyOrderStatusChange(client as never, 1, "shipped", "user-1");
+
+    expect(result).toEqual({ outcome: "error" });
+  });
 });

@@ -1,12 +1,42 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { shopifyConnector } from "@/lib/platforms/shopify";
 import { mockFetchSequence } from "../mocks/fetch";
+import { mockedLookup } from "../mocks/dns";
 
 const credentials = { storeUrl: "https://acme.myshopify.com", apiKey: "shpat_test" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  mockedLookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+});
+
+// Regression tests for the SSRF fix (Architecture Review: "SSRF via
+// unvalidated outbound URLs"): store_url is entered by an authenticated
+// user via /shops/connect, and every request this connector makes is
+// built from it — a store_url pointing at an internal/private address
+// must never actually reach fetch().
+describe("shopifyConnector — SSRF guard", () => {
+  it("never calls fetch() for a store_url that is a literal private IP", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      shopifyConnector.testConnection({ storeUrl: "169.254.169.254", apiKey: "shpat_test" })
+    ).resolves.toBe(false); // testConnection catches everything and returns false
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never calls fetch() when store_url resolves (via DNS) to a private address", async () => {
+    mockedLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(shopifyConnector.fetchProducts(credentials)).rejects.toThrow();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("shopifyConnector.testConnection", () => {

@@ -5,6 +5,8 @@ import { ErrorBanner } from "@/components/error-banner";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
+import { StatCard } from "@/components/stat-card";
+import { ExecutionStatusLabel } from "@/components/execution-status-label";
 import {
   Table,
   TableBody,
@@ -13,17 +15,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EVENT_TYPES } from "@/lib/events/types";
-import { AVAILABLE_MODULES } from "@/lib/automation-modules";
-import { formatDuration } from "@/lib/utils";
+import { EVENT_TYPES, getEventTypeLabel } from "@/lib/events/types";
+import { getModuleCatalogEntry, summarizeStepConfig } from "@/lib/automation-modules/catalog";
+import { formatDuration, formatRelativeTime } from "@/lib/utils";
 import type { ShopWithStats } from "@/types/shop";
-import type { WorkflowExecution, WorkflowStep } from "@/types/workflow";
+import type { WorkflowExecution, WorkflowStep, WorkflowWithStats } from "@/types/workflow";
 import {
   updateWorkflowDetails,
   activateWorkflow,
   deactivateWorkflow,
-  addWorkflowStep,
-  updateWorkflowStep,
   removeWorkflowStep,
   moveWorkflowStepUp,
   moveWorkflowStepDown,
@@ -96,20 +96,32 @@ export default async function WorkflowEditorPage({
 
   const steps = [...workflow.workflow_steps].sort((a, b) => a.step_order - b.step_order);
 
-  // A secondary section — if this fails, the rest of the page (already
-  // loaded fine above) still renders; only this table shows an inline
-  // error, same pattern as the sync history table on /shops/[id].
-  const { data: history, error: historyError } = await supabase
-    .from("workflow_executions")
-    .select("*")
-    .eq("workflow_id", workflow.id)
-    .order("started_at", { ascending: false })
-    .limit(20)
-    .returns<WorkflowExecution[]>();
+  // Both secondary sections — if either fails, the rest of the page
+  // (already loaded fine above) still renders; only that section shows an
+  // inline error, same pattern as the sync history table on /shops/[id].
+  const [historyResult, statsResult] = await Promise.all([
+    supabase
+      .from("workflow_executions")
+      .select("*")
+      .eq("workflow_id", workflow.id)
+      .order("started_at", { ascending: false })
+      .limit(20)
+      .returns<WorkflowExecution[]>(),
+    // Reuses the same aggregate the Workflow List and /admin already read
+    // (UI specification §8) — filtered down to this one workflow in JS,
+    // same "fetch via RPC, then find()" shape as the shop lookup above.
+    supabase.rpc("get_workflows_with_stats"),
+  ]);
 
+  const { data: history, error: historyError } = historyResult;
   if (historyError) {
     console.error("Workflow execution history load failed:", historyError);
   }
+
+  if (statsResult.error) {
+    console.error("Workflow statistics load failed:", statsResult.error);
+  }
+  const stats = ((statsResult.data ?? []) as WorkflowWithStats[]).find((w) => w.id === workflow.id) ?? null;
 
   return (
     <main className="mx-auto max-w-3xl space-y-6 p-6">
@@ -143,7 +155,7 @@ export default async function WorkflowEditorPage({
       )}
       {sp.tested !== undefined && (
         <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-          Test run complete — see Recent Executions below.
+          Test run complete — see Execution History below.
         </p>
       )}
       {sp.error && (
@@ -172,7 +184,7 @@ export default async function WorkflowEditorPage({
             >
               {EVENT_TYPES.map((eventType) => (
                 <option key={eventType} value={eventType}>
-                  {eventType}
+                  {getEventTypeLabel(eventType)}
                 </option>
               ))}
             </select>
@@ -201,137 +213,115 @@ export default async function WorkflowEditorPage({
         </div>
       </div>
 
-      {/* Zone 2 — Steps */}
+      {/* Zone 3 — The flow (the "Visual Editor": a stacked column of step
+          cards connected by simple arrows, not a drag-and-drop canvas — UI
+          specification, "Réconciliation du vocabulaire"). Editing a step
+          navigates to its own Properties Panel page instead of expanding
+          an inline form (§6); adding one navigates to the Module Palette
+          (§5). */}
       <div className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-lg font-semibold">Steps</h2>
 
-        {steps.length === 0 && (
-          <p className="mb-4 text-sm text-gray-500">
-            No steps yet. Add at least one below before activating this workflow.
-          </p>
-        )}
-
-        <div className="space-y-3">
-          {steps.map((step, index) => (
-            <div key={step.id} className="rounded-md border p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono text-xs text-gray-500">Step {step.step_order}</span>
-                <div className="flex items-center gap-2">
-                  <form action={moveWorkflowStepUp}>
-                    <input type="hidden" name="shop_id" value={shop.id} />
-                    <input type="hidden" name="workflow_id" value={workflow.id} />
-                    <input type="hidden" name="step_id" value={step.id} />
-                    <SubmitButton variant="secondary" pendingLabel="…">
-                      {index === 0 ? <span className="opacity-30">↑</span> : "↑"}
-                    </SubmitButton>
-                  </form>
-                  <form action={moveWorkflowStepDown}>
-                    <input type="hidden" name="shop_id" value={shop.id} />
-                    <input type="hidden" name="workflow_id" value={workflow.id} />
-                    <input type="hidden" name="step_id" value={step.id} />
-                    <SubmitButton variant="secondary" pendingLabel="…">
-                      {index === steps.length - 1 ? <span className="opacity-30">↓</span> : "↓"}
-                    </SubmitButton>
-                  </form>
-                  <ConfirmActionForm
-                    shopId={shop.id}
-                    action={removeWorkflowStep}
-                    buttonLabel="Delete"
-                    pendingLabel="Deleting…"
-                    confirmMessage={`Remove step ${step.step_order} (${step.module_name})?`}
-                  >
-                    <input type="hidden" name="workflow_id" value={workflow.id} />
-                    <input type="hidden" name="step_id" value={step.id} />
-                  </ConfirmActionForm>
+        {steps.length === 0 ? (
+          <div className="mb-2 rounded-md border border-dashed p-6 text-center">
+            <p className="mb-3 text-sm text-gray-500">This workflow has no steps yet.</p>
+            <Link
+              href={`/shops/${shop.id}/workflows/${workflow.id}/steps/new`}
+              className="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              + Add your first step
+            </Link>
+          </div>
+        ) : (
+          <div className="mx-auto max-w-md space-y-0">
+            {steps.map((step, index) => {
+              const entry = getModuleCatalogEntry(step.module_name);
+              return (
+                <div key={step.id}>
+                  <div className="rounded-md border p-4">
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-xs font-bold text-blue-600">{step.step_order}</span>
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-semibold">
+                        {entry.icon} {entry.name}
+                      </span>
+                      <span className="flex-1 truncate text-xs text-gray-500">
+                        {summarizeStepConfig(step.module_name, step.config)}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3 border-t pt-3 text-xs">
+                      <form action={moveWorkflowStepUp}>
+                        <input type="hidden" name="shop_id" value={shop.id} />
+                        <input type="hidden" name="workflow_id" value={workflow.id} />
+                        <input type="hidden" name="step_id" value={step.id} />
+                        <SubmitButton variant="secondary" pendingLabel="…">
+                          {index === 0 ? <span className="opacity-30">↑</span> : "↑"}
+                        </SubmitButton>
+                      </form>
+                      <form action={moveWorkflowStepDown}>
+                        <input type="hidden" name="shop_id" value={shop.id} />
+                        <input type="hidden" name="workflow_id" value={workflow.id} />
+                        <input type="hidden" name="step_id" value={step.id} />
+                        <SubmitButton variant="secondary" pendingLabel="…">
+                          {index === steps.length - 1 ? <span className="opacity-30">↓</span> : "↓"}
+                        </SubmitButton>
+                      </form>
+                      <Link
+                        href={`/shops/${shop.id}/workflows/${workflow.id}/steps/${step.id}/edit`}
+                        className="rounded-md border px-4 py-2 font-medium hover:bg-gray-50"
+                      >
+                        Edit
+                      </Link>
+                      <ConfirmActionForm
+                        shopId={shop.id}
+                        action={removeWorkflowStep}
+                        buttonLabel="Delete"
+                        pendingLabel="Deleting…"
+                        confirmMessage={`Remove step ${step.step_order} (${step.module_name})?`}
+                      >
+                        <input type="hidden" name="workflow_id" value={workflow.id} />
+                        <input type="hidden" name="step_id" value={step.id} />
+                      </ConfirmActionForm>
+                    </div>
+                  </div>
+                  {index < steps.length - 1 && (
+                    <div className="py-1 text-center font-mono text-gray-400">↓</div>
+                  )}
                 </div>
-              </div>
-
-              {/* Each row is its own mini-form — no separate "edit mode" to
-                  toggle, per the Builder specification's own wording. */}
-              <form action={updateWorkflowStep} className="space-y-3">
-                <input type="hidden" name="shop_id" value={shop.id} />
-                <input type="hidden" name="workflow_id" value={workflow.id} />
-                <input type="hidden" name="step_id" value={step.id} />
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Module</label>
-                  <select
-                    name="module_name"
-                    required
-                    defaultValue={step.module_name}
-                    className="w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    {!AVAILABLE_MODULES.includes(step.module_name) && (
-                      <option value={step.module_name}>{step.module_name} (unavailable)</option>
-                    )}
-                    {AVAILABLE_MODULES.map((moduleName) => (
-                      <option key={moduleName} value={moduleName}>
-                        {moduleName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Configuration (JSON)
-                  </label>
-                  <textarea
-                    name="config"
-                    rows={3}
-                    defaultValue={JSON.stringify(step.config, null, 2)}
-                    className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-                  />
-                </div>
-                <SubmitButton variant="secondary" pendingLabel="Saving…">
-                  Save Step
-                </SubmitButton>
-              </form>
+              );
+            })}
+            <div className="pt-4 text-center">
+              <Link
+                href={`/shops/${shop.id}/workflows/${workflow.id}/steps/new`}
+                className="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                + Add Step
+              </Link>
             </div>
-          ))}
-        </div>
-
-        <div className="mt-4 border-t pt-4">
-          <h3 className="mb-3 text-sm font-semibold text-gray-700">Add Step</h3>
-          {AVAILABLE_MODULES.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              No automation modules are available yet — steps can&apos;t be added until a module
-              is registered.
-            </p>
-          ) : (
-            <form action={addWorkflowStep} className="space-y-3">
-              <input type="hidden" name="shop_id" value={shop.id} />
-              <input type="hidden" name="workflow_id" value={workflow.id} />
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Module</label>
-                <select name="module_name" required className="w-full rounded-md border px-3 py-2 text-sm">
-                  {AVAILABLE_MODULES.map((moduleName) => (
-                    <option key={moduleName} value={moduleName}>
-                      {moduleName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Configuration (JSON)
-                </label>
-                <textarea
-                  name="config"
-                  rows={3}
-                  defaultValue="{}"
-                  className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-                />
-              </div>
-              <SubmitButton variant="secondary" pendingLabel="Adding…">
-                Add Step
-              </SubmitButton>
-            </form>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Zone 3 — Recent executions (read-only) */}
+      {/* Zone 4 — Statistics (UI specification §8), stacked above Execution
+          History (§7) — same StatCard row already used on the Dashboard,
+          /shops/[id], and /admin. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Total Runs" value={stats ? stats.execution_count : "—"} />
+        <StatCard
+          label="Success Rate"
+          value={stats && stats.execution_count > 0 ? `${Math.round((stats.success_count / stats.execution_count) * 100)}%` : "—"}
+        />
+        <StatCard
+          label="Last Run"
+          value={stats?.last_execution_at ? formatRelativeTime(new Date(stats.last_execution_at)) : "—"}
+        />
+        <StatCard
+          label="Avg Duration"
+          value={stats?.avg_duration_ms ? formatDuration(Number(stats.avg_duration_ms)) : "—"}
+        />
+      </div>
+
       <div className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-lg font-semibold">Recent Executions</h2>
+        <h2 className="mb-4 text-lg font-semibold">Execution History</h2>
         {historyError ? (
           <p className="text-sm text-red-600">Couldn&apos;t load execution history.</p>
         ) : (
@@ -354,11 +344,7 @@ export default async function WorkflowEditorPage({
                     <TableCell>{entry.step_order}</TableCell>
                     <TableCell>{entry.module_name}</TableCell>
                     <TableCell>
-                      <span
-                        className={entry.status === "success" ? "text-green-700" : "text-red-700"}
-                      >
-                        {entry.status === "success" ? "Success" : "Failed"}
-                      </span>
+                      <ExecutionStatusLabel entry={entry} />
                     </TableCell>
                     <TableCell>{formatDuration(entry.duration_ms)}</TableCell>
                     <TableCell>{entry.message ?? "-"}</TableCell>
@@ -367,7 +353,10 @@ export default async function WorkflowEditorPage({
               </TableBody>
             </Table>
             {(!history || history.length === 0) && (
-              <p className="p-4 text-center text-gray-500">No executions yet.</p>
+              <p className="p-4 text-center text-gray-500">
+                No executions yet. Activate this workflow or use &quot;Test Workflow Now&quot; to see
+                results here.
+              </p>
             )}
           </>
         )}

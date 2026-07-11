@@ -14,8 +14,17 @@ const PROTECTED_PREFIXES = ["/dashboard", "/analytics", "/products", "/shops", "
 // layer: even if this ever failed to run, the pages themselves query with the
 // user's own session, so an unauthenticated/wrong-user request just gets back
 // zero rows, never someone else's data.
-export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({ request });
+//
+// requestHeaders (optional) carries proxy.ts's per-request CSP nonce +
+// policy — every NextResponse.next({request}) below uses it instead of the
+// raw incoming request so Next's own renderer sees the nonce and stamps it
+// onto the inline scripts it injects for RSC/hydration payloads (the
+// documented Next.js pattern for a nonce-based CSP). Optional, and falls
+// back to the plain request, so this function still works exactly as
+// before for any caller (e.g. existing tests) that doesn't pass one.
+export async function updateSession(request: NextRequest, requestHeaders?: Headers) {
+  const nextRequest = requestHeaders ? { headers: requestHeaders } : request;
+  let response = NextResponse.next({ request: nextRequest });
 
   const supabase = createServerClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_ANON_KEY"), {
     cookies: {
@@ -24,7 +33,7 @@ export async function updateSession(request: NextRequest) {
       },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
+        response = NextResponse.next({ request: nextRequest });
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options)
         );

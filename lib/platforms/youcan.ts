@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "./retry";
+import { fetchWithRetry, fetchWithTimeout } from "./retry";
+import { assertPublicHttpUrl } from "@/lib/net-guard";
 import type {
   PlatformConnector,
   PlatformCredentials,
@@ -33,25 +34,14 @@ function youcanHeaders(apiKey: string) {
   };
 }
 
-async function fetchWithTimeout(url: string, headers: Record<string, string>) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    return await fetch(url, { headers, signal: controller.signal });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`YouCan request timed out after ${TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 // On HTTP 429, wait for Retry-After then retry — same gap-closing reasoning
-// as WooCommerce; see lib/platforms/retry.ts.
+// as WooCommerce; see lib/platforms/retry.ts. Same SSRF guard as the other
+// two connectors — see shopify.ts's fetchShopify() for the full reasoning.
 async function fetchYouCan(url: string, headers: Record<string, string>): Promise<Response> {
-  return fetchWithRetry(() => fetchWithTimeout(url, headers), { providerName: "YouCan" });
+  await assertPublicHttpUrl(url);
+  return fetchWithRetry(() => fetchWithTimeout(url, { headers }, TIMEOUT_MS, "YouCan"), {
+    providerName: "YouCan",
+  });
 }
 
 type YouCanProduct = {

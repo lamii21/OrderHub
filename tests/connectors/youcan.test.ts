@@ -1,11 +1,28 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { youcanConnector } from "@/lib/platforms/youcan";
 import { mockFetchSequence } from "../mocks/fetch";
+import { mockedLookup } from "../mocks/dns";
 
 const credentials = { storeUrl: "https://acme.youcan.shop", apiKey: "yc_test" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockedLookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+});
+
+// Regression test for the SSRF fix — see tests/connectors/shopify.test.ts's
+// equivalent block for the full reasoning.
+describe("youcanConnector — SSRF guard", () => {
+  it("never calls fetch() for a store_url that is a literal private IP", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      youcanConnector.testConnection({ storeUrl: "127.0.0.1", apiKey: "yc_test" })
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("youcanConnector.testConnection", () => {
@@ -68,6 +85,16 @@ describe("youcanConnector.fetchProducts", () => {
     mockFetchSequence([{ ok: false, status: 500 }]);
     await expect(youcanConnector.fetchProducts(credentials)).rejects.toThrow("YouCan API error: 500");
   });
+
+  it("reports a timed-out request distinctly, not a generic network error", async () => {
+    const abortError = new Error("This operation was aborted");
+    abortError.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+
+    await expect(youcanConnector.fetchProducts(credentials)).rejects.toThrow(
+      "YouCan request timed out after 15s"
+    );
+  });
 });
 
 describe("youcanConnector.fetchOrders", () => {
@@ -124,5 +151,42 @@ describe("youcanConnector.fetchOrders", () => {
     const orders = await youcanConnector.fetchOrders(credentials, null);
     expect(orders[0].lines[0].customerName).toBe("");
     expect(orders[0].lines[0].customerCity).toBe("");
+  });
+
+  it("passes since as created_after when provided", async () => {
+    const fetchMock = mockFetchSequence([{ json: async () => [] }]);
+
+    await youcanConnector.fetchOrders(credentials, "2026-01-01T00:00:00.000Z");
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("created_after=2026-01-01");
+  });
+
+  it("throws a descriptive error on a non-ok response", async () => {
+    mockFetchSequence([{ ok: false, status: 500 }]);
+    await expect(youcanConnector.fetchOrders(credentials, null)).rejects.toThrow("YouCan API error: 500");
+  });
+
+  it("paginates until a page shorter than the page size is returned", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: i,
+      created_at: "2026-01-05T00:00:00Z",
+      customer: null,
+      address: null,
+      items: [{ title: "Scarf", quantity: 1, price: 12 }],
+    }));
+    const fetchMock = mockFetchSequence([
+      { json: async () => fullPage },
+      {
+        json: async () => [
+          { id: 100, created_at: "2026-01-05T00:00:00Z", customer: null, address: null, items: [] },
+        ],
+      },
+    ]);
+
+    const orders = await youcanConnector.fetchOrders(credentials, null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(orders).toHaveLength(101);
   });
 });

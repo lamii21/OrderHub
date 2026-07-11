@@ -76,6 +76,21 @@ describe("deleteShop", () => {
     expect(client.from).toHaveBeenCalledTimes(1);
   });
 
+  it("stops and redirects with an error if deleting products fails, without touching shops", async () => {
+    const { client } = createMockSupabase({
+      responses: {
+        orders: { data: null, error: null },
+        products: { data: null, error: { message: "constraint violation" } },
+      },
+    });
+    holder.client = client;
+
+    await expect(deleteShop(formData({ shop_id: "5" }))).rejects.toThrow(
+      /REDIRECT:\/shops\?error=.*products/
+    );
+    expect(client.from).toHaveBeenCalledTimes(2);
+  });
+
   it("stops and redirects with an error if deleting the shop itself fails (e.g. an FK this migration didn't cover)", async () => {
     const { client } = createMockSupabase({
       responses: {
@@ -121,6 +136,17 @@ describe("updateShopName", () => {
     );
     expect(builders.shops[0].update).toHaveBeenCalledWith({ name: "New Name" });
   });
+
+  it("redirects with an error when the update fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { shops: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(updateShopName(formData({ shop_id: "5", name: "New Name" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/5\?error=.*Could%20not%20update%20the%20shop%20name/
+    );
+  });
 });
 
 describe("disconnectStore", () => {
@@ -144,6 +170,17 @@ describe("disconnectStore", () => {
     expect(payload.api_key).toBeNull();
     expect(payload.api_secret).toBeNull();
     expect(typeof payload.credentials_changed_at).toBe("string");
+  });
+
+  it("redirects with an error when the update fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { shops: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(disconnectStore(formData({ shop_id: "5" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/5\?error=.*Could%20not%20disconnect%20the%20store/
+    );
   });
 });
 
@@ -175,5 +212,16 @@ describe("updateSyncFrequency", () => {
       updateSyncFrequency(formData({ shop_id: "5", sync_frequency: "every_6h" }))
     ).rejects.toThrow("REDIRECT:/shops/5");
     expect(builders.shops[0].update).toHaveBeenCalledWith({ sync_frequency: "every_6h" });
+  });
+
+  it("redirects with an error when the update fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { shops: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(
+      updateSyncFrequency(formData({ shop_id: "5", sync_frequency: "daily" }))
+    ).rejects.toThrow(/REDIRECT:\/shops\/5\?error=.*Could%20not%20update%20sync%20frequency/);
   });
 });

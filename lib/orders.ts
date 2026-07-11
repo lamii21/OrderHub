@@ -47,10 +47,23 @@ export async function applyOrderStatusChange(
     return { outcome: "unchanged" };
   }
 
+  // Guarded by the status this function itself just read, not just the id
+  // — without it, two concurrent callers reading the same previousStatus
+  // (a dashboard click racing a workflow's Update Status step, or a
+  // double-submitted form) could both write their own target status and
+  // both insert an order_history row claiming to transition from the same
+  // previousStatus, even though only one of those transitions actually
+  // happened from that starting point. If a concurrent write already moved
+  // the row off previousStatus, this predicate matches zero rows —
+  // .single() then errors exactly the way it already does for an
+  // RLS-blocked update (the order isn't the caller's own), so a lost race
+  // surfaces as the same "Could not update order status." outcome instead
+  // of silently succeeding with an inaccurate audit trail.
   const { data: updatedOrder, error } = await supabase
     .from("orders")
     .update({ status: newStatus })
     .eq("id", orderId)
+    .eq("status", previousStatus)
     .select("*, shops(name, platform)")
     .single();
 

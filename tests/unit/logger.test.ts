@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { logger } from "@/lib/logger";
+import { logger, setErrorReporter } from "@/lib/logger";
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -17,6 +17,8 @@ afterEach(() => {
   // .mock.calls accumulates across every test in this file instead of
   // resetting per test.
   vi.restoreAllMocks();
+  // setErrorReporter's registration is module-scope state, same reason.
+  setErrorReporter(null);
 });
 
 function parsedCall(spy: ReturnType<typeof vi.spyOn>) {
@@ -64,5 +66,53 @@ describe("logger", () => {
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(parsedCall(logSpy).event).toBe("startup.env_validation_passed");
+  });
+
+  describe("setErrorReporter", () => {
+    it("forwards error() calls to the registered reporter with the same event/fields", () => {
+      const reporter = vi.fn();
+      setErrorReporter(reporter);
+
+      logger.error("webhook.failed", { shopId: 2 });
+
+      expect(reporter).toHaveBeenCalledWith("webhook.failed", { shopId: 2 });
+    });
+
+    it("never forwards info() or warn() calls, only error()", () => {
+      const reporter = vi.fn();
+      setErrorReporter(reporter);
+
+      logger.info("shop.connected", { shopId: 1 });
+      logger.warn("sync.slow", { durationMs: 9000 });
+
+      expect(reporter).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op by default (no reporter registered) — existing behavior is unchanged", () => {
+      logger.error("webhook.failed", { shopId: 2 });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a reporter that itself throws never breaks the caller's own logging", () => {
+      setErrorReporter(() => {
+        throw new Error("Sentry is down");
+      });
+
+      expect(() => logger.error("webhook.failed", { shopId: 2 })).not.toThrow();
+      // The original error log still went out, plus one more for the
+      // reporter's own failure — never fewer than the caller expected.
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("setErrorReporter(null) un-registers a previously set reporter", () => {
+      const reporter = vi.fn();
+      setErrorReporter(reporter);
+      setErrorReporter(null);
+
+      logger.error("webhook.failed", { shopId: 2 });
+
+      expect(reporter).not.toHaveBeenCalled();
+    });
   });
 });

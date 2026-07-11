@@ -11,12 +11,22 @@ import { formatRelativeTime } from "@/lib/utils";
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
 import { CURRENCIES, getTimezones } from "@/lib/shop-settings";
 import { disconnectStore } from "@/app/shops/actions";
-import { updateShopSettings, updateNotificationSettings, regenerateSpreadsheet } from "./actions";
+import {
+  updateShopSettings,
+  updateNotificationSettings,
+  regenerateSpreadsheet,
+  regenerateWebhookSecret,
+} from "./actions";
 import type { ShopWithStats } from "@/types/shop";
 
 export const revalidate = 0;
 
-type SearchParams = { saved?: string; regenerated?: string; error?: string };
+type SearchParams = {
+  saved?: string;
+  regenerated?: string;
+  secret_regenerated?: string;
+  error?: string;
+};
 
 export default async function ShopSettingsPage({
   params,
@@ -31,7 +41,16 @@ export default async function ShopSettingsPage({
   // Same RPC every other shop page already uses — reused rather than
   // writing a settings-specific query for data that's already there.
   const supabase = await createSupabaseServerClient();
-  const { data: shops, error } = await supabase.rpc("get_shops_with_stats");
+  const [{ data: shops, error }, { data: secretRow, error: secretError }] = await Promise.all([
+    supabase.rpc("get_shops_with_stats"),
+    // webhook_secret is deliberately NOT part of get_shops_with_stats()'s
+    // output — that RPC backs several pages, and a secret has no business
+    // being included anywhere it isn't specifically needed. Fetched here,
+    // on the one page that actually displays it, via a targeted query on
+    // just this column. RLS's "Users can view their own shops" policy is
+    // what actually stops this from returning another user's secret.
+    supabase.from("shops").select("webhook_secret").eq("id", id).single(),
+  ]);
 
   if (error) {
     console.error("Shop settings load failed:", error);
@@ -40,11 +59,17 @@ export default async function ShopSettingsPage({
     );
   }
 
+  if (secretError) {
+    console.error("Shop settings: failed to load webhook secret:", secretError);
+  }
+
   const shop = (shops as ShopWithStats[]).find((s) => s.id === Number(id));
 
   if (!shop) {
     notFound();
   }
+
+  const webhookSecret = secretRow?.webhook_secret ?? null;
 
   const nextSyncAt = shop.store_url ? computeNextSyncAt(shop) : null;
 
@@ -68,6 +93,12 @@ export default async function ShopSettingsPage({
       {sp.regenerated && (
         <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
           A new spreadsheet was created and linked to this shop.
+        </p>
+      )}
+      {sp.secret_regenerated && (
+        <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          A new webhook secret was generated. Update any integration still using the old one — it
+          no longer works.
         </p>
       )}
       {sp.error && (
@@ -285,6 +316,36 @@ export default async function ShopSettingsPage({
             />
           )}
         </div>
+      </div>
+
+      <div className="rounded-lg border bg-white p-6">
+        <h2 className="mb-4 text-lg font-semibold">Webhook Secret</h2>
+        <p className="mb-4 text-sm text-gray-500">
+          A secret scoped to only this shop. Send it as the{" "}
+          <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">x-api-key</code> header instead
+          of the shared account-wide secret so a leaked key can only ever affect this one shop.
+        </p>
+        <dl className="mb-4 space-y-2 text-sm">
+          <DetailRow
+            label="Secret"
+            value={
+              webhookSecret ? (
+                <code className="break-all rounded bg-gray-100 px-2 py-1 text-xs">
+                  {webhookSecret}
+                </code>
+              ) : (
+                "Unavailable"
+              )
+            }
+          />
+        </dl>
+        <ConfirmActionForm
+          shopId={shop.id}
+          action={regenerateWebhookSecret}
+          buttonLabel="Regenerate Webhook Secret"
+          pendingLabel="Regenerating…"
+          confirmMessage="Generate a new webhook secret for this shop? The current secret stops working immediately — any integration still sending it will need to be updated with the new value shown here. This cannot be undone."
+        />
       </div>
 
       <div className="rounded-lg border bg-white p-6">

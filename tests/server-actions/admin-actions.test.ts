@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockSupabase } from "../mocks/supabase";
+import { __resetRateLimitState } from "@/lib/rate-limit";
 
 const { runSyncForShops, getConnector, runWorkflow } = vi.hoisted(() => ({
   runSyncForShops: vi.fn(),
@@ -8,6 +9,7 @@ const { runSyncForShops, getConnector, runWorkflow } = vi.hoisted(() => ({
 }));
 
 const holder = vi.hoisted(() => ({ client: undefined as unknown }));
+const headersMock = vi.hoisted(() => ({ ip: "203.0.113.5" }));
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
@@ -15,6 +17,11 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => ({
+    get: (name: string) => (name === "x-forwarded-for" ? headersMock.ip : null),
+  })),
+}));
 vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: vi.fn(async () => holder.client),
 }));
@@ -28,13 +35,16 @@ vi.mock("@/lib/sync", () => ({
 vi.mock("@/lib/platforms", () => ({ getConnector }));
 vi.mock("@/lib/workflows/engine", () => ({ runWorkflow }));
 
-import { runSyncNow, testAllConnections, retryFailedWorkflowExecutions } from "@/app/admin/actions";
+import { runSyncNow, refreshDashboard, testAllConnections, retryFailedWorkflowExecutions } from "@/app/admin/actions";
 
 beforeEach(() => {
   runSyncForShops.mockReset();
   getConnector.mockReset();
   runWorkflow.mockReset();
+  __resetRateLimitState();
+  headersMock.ip = "203.0.113.5";
   vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 describe("runSyncNow", () => {
@@ -59,7 +69,25 @@ describe("runSyncNow", () => {
   });
 });
 
+describe("refreshDashboard", () => {
+  it("redirects back to /admin", async () => {
+    await expect(refreshDashboard()).rejects.toThrow("REDIRECT:/admin");
+  });
+});
+
 describe("testAllConnections", () => {
+  it("redirects with an error when the shops query fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { shops: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(testAllConnections()).rejects.toThrow(
+      /REDIRECT:\/admin\?error=.*Could%20not%20load%20shops%20to%20test/
+    );
+    expect(getConnector).not.toHaveBeenCalled();
+  });
+
   it("counts passed/failed connections and redirects with the summary", async () => {
     const shops = [
       { id: 1, platform: "Shopify", store_url: "https://a.myshopify.com", api_key: "k1" },
@@ -86,9 +114,48 @@ describe("testAllConnections", () => {
       "REDIRECT:/admin?tested=1&tests_passed=0&tests_failed=1"
     );
   });
+
+  it("returns 429-equivalent (redirects with an error) once the rate limit is exceeded, without querying shops", async () => {
+    const { client } = createMockSupabase({ responses: { shops: { data: [], error: null } } });
+    holder.client = client;
+
+    for (let i = 0; i < 10; i++) {
+      await expect(testAllConnections()).rejects.toThrow("REDIRECT:/admin?tested=0&tests_passed=0&tests_failed=0");
+    }
+
+    client.from.mockClear();
+    await expect(testAllConnections()).rejects.toThrow(/REDIRECT:\/admin\?error=Too%20many%20requests/);
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("tracks separate callers independently for the rate limit", async () => {
+    const { client } = createMockSupabase({ responses: { shops: { data: [], error: null } } });
+    holder.client = client;
+
+    for (let i = 0; i < 10; i++) {
+      await expect(testAllConnections()).rejects.toThrow();
+    }
+
+    headersMock.ip = "198.51.100.9";
+    await expect(testAllConnections()).rejects.toThrow(
+      "REDIRECT:/admin?tested=0&tests_passed=0&tests_failed=0"
+    );
+  });
 });
 
 describe("retryFailedWorkflowExecutions", () => {
+  it("redirects with an error when loading today's failed executions fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { workflow_executions: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(retryFailedWorkflowExecutions()).rejects.toThrow(
+      /REDIRECT:\/admin\?error=.*Could%20not%20load%20failed%20executions/
+    );
+    expect(runWorkflow).not.toHaveBeenCalled();
+  });
+
   it("deduplicates several failed steps from the same (workflow, order) pair into a single retry", async () => {
     const { client } = createMockSupabase({
       responses: {

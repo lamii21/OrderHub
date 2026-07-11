@@ -7,6 +7,13 @@ import type { Order } from "@/types/order";
 // only ever read it, only the engine ever writes to it.
 export type WorkflowContext = Record<string, Record<string, unknown>>;
 
+// The Execution Engine's control-flow vocabulary, beyond plain
+// success/failed — see ModuleResult.outcome below for what each value
+// actually does. Every module shipped today omits this field entirely and
+// keeps behaving exactly as before; it exists for Delay/Condition (and any
+// future module) to opt into.
+export type ModuleOutcome = "success" | "failed" | "stop" | "waiting" | "retry";
+
 // What every module's run() returns instead of void — the Execution Engine
 // turns this directly into the workflow_executions row (status + message),
 // and folds `data` into the context for later steps. Modules never touch
@@ -16,6 +23,28 @@ export type ModuleResult = {
   success: boolean;
   message?: string;
   data?: Record<string, unknown>;
+  // Optional, richer signal layered on top of `success` — omit it (as
+  // every currently-shipped module does) and the engine branches on
+  // `success` alone, exactly as before this field existed. When present,
+  // it takes priority over `success` for deciding what the engine does
+  // next:
+  //   "stop"    — a deliberate early exit (e.g. Condition evaluating
+  //               false), not an error. Halts the rest of this workflow
+  //               run; recorded as a successful step.
+  //   "waiting" — the module wants to pause and resume later (e.g.
+  //               Delay). True suspend/resume — a persisted "waiting"
+  //               state and a cron sweep to pick it back up — isn't built
+  //               yet (a deliberate, separate decision per the Automation
+  //               Modules catalog); the engine currently treats this the
+  //               same as "stop" for this run, rather than silently
+  //               continuing past a step that asked to wait.
+  //   "retry"   — the module wants this step retried. No automatic retry
+  //               exists yet; the engine records the attempt as failed
+  //               and moves on to the next step, same as any other
+  //               failure, until a real retry mechanism is built. This is
+  //               the hook a future retry mechanism attaches to, not
+  //               retry logic itself.
+  outcome?: ModuleOutcome;
 };
 
 // The contract every automation module implements — deliberately 2 required

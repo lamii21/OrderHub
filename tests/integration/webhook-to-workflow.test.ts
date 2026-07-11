@@ -20,6 +20,7 @@ vi.mock("@/lib/supabase", () => ({
 vi.mock("@/lib/shop", () => ({ createOrUpdateShop }));
 
 import { POST } from "@/app/api/orders/route";
+import { invalidateWorkflowCache } from "@/lib/workflows/manager";
 
 function insertedRows(builders: ReturnType<typeof createMockSupabase>["builders"], table: string) {
   return builders[table].flatMap((b) => b.insert.mock.calls).map((call) => call[0]);
@@ -36,6 +37,10 @@ function makeRequest(body: unknown) {
 beforeEach(() => {
   createOrUpdateShop.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
+  // resolveWorkflows() (lib/workflows/manager.ts) now caches its result
+  // per (shopId, eventType) — reset so each test queries fresh instead of
+  // reusing another test's resolved (or empty) workflow list.
+  invalidateWorkflowCache();
 });
 
 describe("a real incoming order triggers a real Active workflow end to end", () => {

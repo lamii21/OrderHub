@@ -1,10 +1,12 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { provisionShopSpreadsheet } from "@/lib/google-sheets";
 import { isValidEmail } from "@/lib/validation";
 import { isValidSyncFrequency } from "@/lib/sync-schedule";
+import { logger } from "@/lib/logger";
 
 // All 3 settings actions below share one pattern with updateShopName/
 // updateSyncFrequency/disconnectStore (app/shops/actions.ts): the
@@ -132,5 +134,38 @@ export async function regenerateSpreadsheet(formData: FormData) {
     );
   }
 
+  logger.audit("shop.spreadsheet_regenerated", { shopId });
   redirect(`/shops/${shopId}/settings?regenerated=1`);
+}
+
+// schema.sql generates every shop's initial webhook_secret automatically
+// (a column default, backfilled for existing shops too) — this is only for
+// a merchant who suspects theirs has leaked and wants a fresh one without
+// waiting on support. 32 random bytes as hex (64 chars), same shape as the
+// database's own gen_random_uuid()-based default and generated the same
+// way lib/env.ts already uses Node's crypto module, so a rotated secret is
+// exactly as strong as an original one. The old value stops working the
+// instant this commits — any Apps Script deployment still sending it will
+// start getting 401s (falling through to the global API_SECRET check,
+// same as any other unrecognized key) until it's updated with the new one
+// shown on this page.
+export async function regenerateWebhookSecret(formData: FormData) {
+  const shopId = String(formData.get("shop_id") ?? "");
+  const newSecret = randomBytes(32).toString("hex");
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("shops")
+    .update({ webhook_secret: newSecret })
+    .eq("id", shopId);
+
+  if (error) {
+    console.error("regenerateWebhookSecret failed:", error);
+    redirect(
+      `/shops/${shopId}/settings?error=${encodeURIComponent("Could not regenerate the webhook secret.")}`
+    );
+  }
+
+  logger.audit("shop.webhook_secret_regenerated", { shopId });
+  redirect(`/shops/${shopId}/settings?secret_regenerated=1`);
 }

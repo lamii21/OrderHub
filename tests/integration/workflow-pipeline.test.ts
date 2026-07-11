@@ -15,6 +15,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 import { handleEvent } from "@/lib/workflows/dispatch";
+import { invalidateWorkflowCache } from "@/lib/workflows/manager";
 import type { Order } from "@/types/order";
 
 const order = {
@@ -38,6 +39,12 @@ function insertedRows(builders: ReturnType<typeof createMockSupabase>["builders"
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
+  // resolveWorkflows() (lib/workflows/manager.ts) now caches its result
+  // per (shopId, eventType) — every test in this file dispatches against
+  // the same shop, so without this reset a later test would silently
+  // reuse an earlier test's resolved workflow instead of querying its own
+  // mocked response.
+  invalidateWorkflowCache();
 });
 
 describe("end-to-end: order.created -> Workflow Manager -> Execution Engine -> real modules -> Execution History", () => {

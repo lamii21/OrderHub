@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { fetchWithRetry } from "@/lib/platforms/retry";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { fetchWithRetry, fetchWithTimeout } from "@/lib/platforms/retry";
 
 function response(status: number, headers: Record<string, string> = {}) {
   const headerMap = new Map(Object.entries(headers));
@@ -55,5 +55,52 @@ describe("fetchWithRetry", () => {
 
     expect(result.status).toBe(200);
     vi.useRealTimers();
+  });
+});
+
+// Shared by shopify.ts/woocommerce.ts/youcan.ts (consolidated out of 3
+// near-identical copies) — exercised directly here rather than only
+// indirectly through each connector's own tests.
+describe("fetchWithTimeout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves normally well within the timeout", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200)));
+
+    const result = await fetchWithTimeout("https://example.com", {}, 15_000, "TestProvider");
+
+    expect(result.status).toBe(200);
+  });
+
+  it("passes the given init through, plus its own abort signal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchWithTimeout("https://example.com", { headers: { Authorization: "Bearer x" } }, 15_000, "TestProvider");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://example.com");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer x");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("reports a timeout with the provider's name in the message, distinct from a generic network error", async () => {
+    const abortError = new Error("This operation was aborted");
+    abortError.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+
+    await expect(fetchWithTimeout("https://example.com", {}, 15_000, "TestProvider")).rejects.toThrow(
+      "TestProvider request timed out after 15s"
+    );
+  });
+
+  it("propagates a non-timeout error unchanged", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNRESET")));
+
+    await expect(fetchWithTimeout("https://example.com", {}, 15_000, "TestProvider")).rejects.toThrow(
+      "ECONNRESET"
+    );
   });
 });

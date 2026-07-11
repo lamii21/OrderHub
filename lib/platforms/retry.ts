@@ -7,6 +7,35 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Same story as fetchWithRetry above: each connector had its own
+// hand-written copy of this exact AbortController/timeout pattern (Node's
+// fetch has no default timeout, so a slow/unresponsive store would
+// otherwise hang the caller indefinitely). Pulled out once here rather
+// than three near-identical ~10-line blocks that would silently drift
+// apart the next time one of them needed a fix. WooCommerce passes no
+// headers (its auth is query-string based, not a header), which is why
+// `init` is a plain RequestInit rather than a headers-only parameter.
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  providerName: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`${providerName} request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // `fetcher` is called fresh on every attempt (never reused) so each retry
 // gets its own AbortController/timeout via the connector's own
 // fetchWithTimeout — this function only decides *whether* to retry, never

@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "./retry";
+import { fetchWithRetry, fetchWithTimeout } from "./retry";
+import { assertPublicHttpUrl } from "@/lib/net-guard";
 import type {
   PlatformConnector,
   PlatformCredentials,
@@ -25,27 +26,20 @@ function wooUrl(
   return `https://${host}/${API_BASE}/${path}?${params.toString()}`;
 }
 
-async function fetchWithTimeout(url: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`WooCommerce request timed out after ${TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 // On HTTP 429, wait for Retry-After then retry — WooCommerce previously had
 // no rate-limit handling at all (flagged in an earlier audit as an
 // asymmetry with the Shopify connector); see lib/platforms/retry.ts,
 // shared across all 3 connectors.
+//
+// Same SSRF guard as the Shopify/YouCan connectors — see shopify.ts's
+// fetchShopify() for the full reasoning. No headers needed here (unlike
+// Shopify/YouCan): WooCommerce's auth is already baked into the URL by
+// wooUrl() above.
 async function fetchWooCommerce(url: string): Promise<Response> {
-  return fetchWithRetry(() => fetchWithTimeout(url), { providerName: "WooCommerce" });
+  await assertPublicHttpUrl(url);
+  return fetchWithRetry(() => fetchWithTimeout(url, {}, TIMEOUT_MS, "WooCommerce"), {
+    providerName: "WooCommerce",
+  });
 }
 
 function nextPageUrl(response: Response): string | null {

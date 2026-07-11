@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { getConnector, type PlatformCredentials } from "@/lib/platforms";
 import { appendOrderRows } from "@/lib/google-sheets";
 import { recordSyncHistory } from "@/lib/sync-history";
+import { runWithConcurrency } from "@/lib/concurrency";
 
 // The shape both callers of this file already have on hand: the manual
 // Server Actions (app/shops/connect/actions.ts) fetch it via the
@@ -99,36 +100,12 @@ export type SyncableShop = ShopForSync & {
   sync_orders_enabled: boolean;
 };
 
-// A fixed number of shops in flight at once — not a queue (nothing is
-// persisted or handed to a separate worker/process, everything still
-// happens inside this one function call), just bounded local concurrency.
-// Previously this loop was fully sequential ("one shop's sync never
-// overlaps another's"), which kept load on platform APIs predictable but
-// meant total wall-clock time was every shop's sync time added together —
-// 100 due shops at a few seconds each could run well past a serverless
-// function's time limit. 10 shops in flight at once keeps the "predictable
-// load" property (10 concurrent calls across 10 different merchants' own
-// platform accounts is nothing like a stampede on one API) while cutting
-// wall-clock time by roughly the concurrency factor.
+// Shops in flight at once — see lib/concurrency.ts's own comment for why
+// this is bounded rather than sequential (a real cron-timeout incident) or
+// unbounded (10 concurrent calls across 10 different merchants' own
+// platform accounts is nothing like a stampede on one API; sequential was
+// the one that actually caused an incident, not unbounded parallelism).
 const SYNC_CONCURRENCY = 10;
-
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>
-): Promise<void> {
-  let nextIndex = 0;
-
-  async function runNext(): Promise<void> {
-    const index = nextIndex++;
-    if (index >= items.length) return;
-    await worker(items[index]);
-    return runNext();
-  }
-
-  const workerCount = Math.min(concurrency, items.length);
-  await Promise.all(Array.from({ length: workerCount }, runNext));
-}
 
 // The one shared loop behind both /api/cron/sync (auto, filtered to
 // due-and-enabled shops, and capped per run — see MAX_SHOPS_PER_RUN there)

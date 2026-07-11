@@ -46,4 +46,30 @@ describe("checkRateLimit", () => {
     const result = checkRateLimit("ip:default-test");
     expect(result.allowed).toBe(true);
   });
+
+  // Regression guard for the memory-bound sweep: once the tracked-key count
+  // exceeds MAX_TRACKED_KEYS, the next call sweeps out any bucket whose
+  // window has already elapsed — observed here by checking that a
+  // long-idle key looks brand new again afterward, rather than still
+  // holding its stale count.
+  it("sweeps out expired buckets once the tracked-key count exceeds the cap", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    for (let i = 0; i < 10_001; i++) {
+      checkRateLimit(`sweep-key-${i}`, { max: 5, windowMs: 1000 });
+    }
+
+    // Past the window for every key created above.
+    vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+
+    // Still over the cap, so this call's own sweep pass actually runs.
+    checkRateLimit("trigger-sweep", { max: 5, windowMs: 1000 });
+
+    const swept = checkRateLimit("sweep-key-0", { max: 5, windowMs: 1000 });
+    expect(swept.allowed).toBe(true);
+    expect(swept.remaining).toBe(4);
+
+    vi.useRealTimers();
+  });
 });

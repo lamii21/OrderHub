@@ -1,3 +1,5 @@
+import type { OrderStatus } from "@/lib/validation";
+
 export type Order = {
   id: number;
   shop_id: number | null;
@@ -11,7 +13,7 @@ export type Order = {
   product_id: number | null;
   quantity: number | null;
   price: number | null;
-  status: string;
+  status: OrderStatus;
   tags: string[];
   archived_at: string | null;
   created_at: string;

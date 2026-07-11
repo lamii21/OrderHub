@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/sync",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/automation-retry",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

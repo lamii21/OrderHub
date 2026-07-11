@@ -1,11 +1,13 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { isValidEventType, type EventType } from "@/lib/events/types";
 import { getAutomationModule } from "@/lib/automation-modules";
 import { runWorkflow } from "@/lib/workflows/engine";
 import { parsePositiveInt } from "@/lib/validation";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 import type { WorkflowStep } from "@/types/workflow";
 import type { Order } from "@/types/order";
@@ -234,29 +236,38 @@ export async function activateWorkflow(formData: FormData) {
     );
   }
 
+  // Every applicable reason is collected and shown together (UI
+  // specification, Errors section) — a merchant fixing a Draft with 3
+  // problems shouldn't have to resubmit 3 times to discover the 2nd and
+  // 3rd. Each check below stays independent of the others (no early
+  // return), same reasoning as a form validating every field at once
+  // rather than stopping at the first invalid one.
+  const reasons: string[] = [];
+
   if (!workflow.name?.trim()) {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("The workflow name is required.")}`
-    );
+    reasons.push("The workflow name is required.");
   }
 
   if (!isValidEventType(workflow.trigger_event)) {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Invalid trigger event.")}`
-    );
+    reasons.push("Invalid trigger event.");
   }
 
   if (workflow.steps.length === 0) {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Add at least one step before activating this workflow.")}`
-    );
+    reasons.push("Add at least one step before activating this workflow.");
   }
 
-  const missingModule = workflow.steps.find((step) => !getAutomationModule(step.module_name));
-  if (missingModule) {
+  for (const step of workflow.steps) {
+    if (!getAutomationModule(step.module_name)) {
+      reasons.push(
+        `Step ${step.step_order} references a module ("${step.module_name}") that no longer exists.`
+      );
+    }
+  }
+
+  if (reasons.length > 0) {
     redirect(
       `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent(
-        `Module "${missingModule.module_name}" is not available. Replace or remove this step.`
+        `Cannot activate this workflow: • ${reasons.join(" • ")}`
       )}`
     );
   }
@@ -332,15 +343,23 @@ export async function addWorkflowStep(formData: FormData) {
     redirect(`/shops/${shopId}/workflows?error=${encodeURIComponent("Invalid workflow.")}`);
   }
 
+  // Validation failures below redirect back to this step's own Properties
+  // Panel (Module Palette when no module was chosen at all), not the main
+  // editor — the error renders localized right above the config field
+  // there, per the UI specification §6. A database failure further down is
+  // a different kind of problem (not something the merchant can fix by
+  // editing the field) and still returns to the main editor, unchanged.
+  const stepsNewUrl = `/shops/${shopId}/workflows/${workflowId}/steps/new`;
+
   if (!moduleName) {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Choose a module for the new step.")}`
-    );
+    redirect(`${stepsNewUrl}?error=${encodeURIComponent("Choose a module for the new step.")}`);
   }
+
+  const propertiesPanelUrl = `${stepsNewUrl}?module=${encodeURIComponent(moduleName)}`;
 
   if (configText.length > MAX_STEP_CONFIG_LENGTH) {
     redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent(
+      `${propertiesPanelUrl}&error=${encodeURIComponent(
         `The step configuration is too large (max ${MAX_STEP_CONFIG_LENGTH.toLocaleString()} characters).`
       )}`
     );
@@ -351,13 +370,13 @@ export async function addWorkflowStep(formData: FormData) {
     config = JSON.parse(configText || "{}");
   } catch {
     redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("The step configuration is not valid JSON.")}`
+      `${propertiesPanelUrl}&error=${encodeURIComponent("The step configuration is not valid JSON.")}`
     );
   }
 
   const validationMessage = getAutomationModule(moduleName)?.validateConfig?.(config);
   if (validationMessage) {
-    redirect(`/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent(validationMessage)}`);
+    redirect(`${propertiesPanelUrl}&error=${encodeURIComponent(validationMessage)}`);
   }
 
   const supabase = await createSupabaseServerClient();
@@ -411,15 +430,19 @@ export async function updateWorkflowStep(formData: FormData) {
     redirect(`/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Invalid step.")}`);
   }
 
+  // Same reasoning as addWorkflowStep: validation failures return to this
+  // step's own Properties Panel (edit page) so the error renders localized
+  // above the config field, per the UI specification §6. A database
+  // failure further down still returns to the main editor, unchanged.
+  const editUrl = `/shops/${shopId}/workflows/${workflowId}/steps/${stepId}/edit`;
+
   if (!moduleName) {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Choose a module for this step.")}`
-    );
+    redirect(`${editUrl}?error=${encodeURIComponent("Choose a module for this step.")}`);
   }
 
   if (configText.length > MAX_STEP_CONFIG_LENGTH) {
     redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent(
+      `${editUrl}?error=${encodeURIComponent(
         `The step configuration is too large (max ${MAX_STEP_CONFIG_LENGTH.toLocaleString()} characters).`
       )}`
     );
@@ -429,14 +452,12 @@ export async function updateWorkflowStep(formData: FormData) {
   try {
     config = JSON.parse(configText || "{}");
   } catch {
-    redirect(
-      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("The step configuration is not valid JSON.")}`
-    );
+    redirect(`${editUrl}?error=${encodeURIComponent("The step configuration is not valid JSON.")}`);
   }
 
   const validationMessage = getAutomationModule(moduleName)?.validateConfig?.(config);
   if (validationMessage) {
-    redirect(`/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent(validationMessage)}`);
+    redirect(`${editUrl}?error=${encodeURIComponent(validationMessage)}`);
   }
 
   const supabase = await createSupabaseServerClient();
@@ -608,6 +629,19 @@ export async function runWorkflowNow(formData: FormData) {
   }
   if (workflowId === null) {
     redirect(`/shops/${shopId}/workflows?error=${encodeURIComponent("Invalid workflow.")}`);
+  }
+
+  // Every step in the workflow makes its own real external call (WhatsApp,
+  // a webhook, ...) — same "this button is the most expensive thing an
+  // authenticated caller can click" reasoning as testConnection() and
+  // testAllConnections().
+  const ip = getClientIp(await headers());
+  const rateLimit = checkRateLimit(`run-workflow-now:${ip}`, { max: 10, windowMs: 60_000 });
+  if (!rateLimit.allowed) {
+    logger.warn("workflow.run_now_rate_limited", { ip, shopId, workflowId });
+    redirect(
+      `/shops/${shopId}/workflows/${workflowId}?error=${encodeURIComponent("Too many requests. Please wait a moment and try again.")}`
+    );
   }
 
   const supabase = await createSupabaseServerClient();

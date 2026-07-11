@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "./retry";
+import { fetchWithRetry, fetchWithTimeout } from "./retry";
+import { assertPublicHttpUrl } from "@/lib/net-guard";
 import type {
   PlatformConnector,
   PlatformCredentials,
@@ -21,28 +22,23 @@ function shopifyHeaders(apiKey: string) {
   };
 }
 
-// Node's fetch has no default timeout, so a slow/unresponsive store would
-// otherwise hang the server action indefinitely.
-async function fetchWithTimeout(url: string, headers: Record<string, string>) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    return await fetch(url, { headers, signal: controller.signal });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Shopify request timed out after ${TIMEOUT_MS / 1000}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 // On HTTP 429, wait for the duration Shopify reports in Retry-After, then
 // retry — see lib/platforms/retry.ts, shared with WooCommerce/YouCan.
+//
+// storeUrl is user-supplied (entered via /shops/connect) and every request
+// this connector makes is built from it — checked here, once, so
+// testConnection/fetchProducts/fetchOrders all get the guard for free
+// instead of each needing its own call. Throws UnsafeUrlError (a plain
+// Error subclass) if the URL resolves to an internal/private address; the
+// caller's existing try/catch (syncShopProducts/syncShopOrders in
+// lib/sync.ts, or testConnection's own try/catch) turns that into the same
+// "sync failed" outcome as any other connector error, no special-casing
+// needed.
 async function fetchShopify(url: string, headers: Record<string, string>): Promise<Response> {
-  return fetchWithRetry(() => fetchWithTimeout(url, headers), { providerName: "Shopify" });
+  await assertPublicHttpUrl(url);
+  return fetchWithRetry(() => fetchWithTimeout(url, { headers }, TIMEOUT_MS, "Shopify"), {
+    providerName: "Shopify",
+  });
 }
 
 function nextPageUrl(response: Response): string | null {

@@ -6,7 +6,9 @@ import type { OrderAutomationStatus } from "@/components/workflow-status-badge";
 import { OrdersTable } from "@/components/orders-table";
 import { StatCard } from "@/components/stat-card";
 import { ErrorBanner } from "@/components/error-banner";
+import { ExecutionStatusLabel } from "@/components/execution-status-label";
 import { formatRelativeTime } from "@/lib/utils";
+import type { WorkflowExecutionWithWorkflow } from "@/types/workflow";
 
 export const revalidate = 0;
 
@@ -39,7 +41,7 @@ export default async function DashboardPage({
   // user's own shops with no manual filter needed here.
   const supabase = await createSupabaseServerClient();
 
-  const [ordersResult, statsResult, latestSyncResult] = await Promise.all([
+  const [ordersResult, statsResult, latestSyncResult, latestWorkflowExecutionResult] = await Promise.all([
     supabase
       .from("orders")
       .select("*, shops(name, platform)", { count: "exact" })
@@ -53,12 +55,23 @@ export default async function DashboardPage({
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // Mirrors the Latest Synchronization card above, one query below it —
+    // a lightweight "is automation running, and did it just work" glance
+    // that doesn't duplicate /admin's full Workflow Engine tables.
+    supabase
+      .from("workflow_executions")
+      .select("*, workflows(name)")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   const { data: orders, count: totalOrders, error: ordersError } = ordersResult;
   const { data: statsRows, error: statsError } = statsResult;
   const { data: latestSync, error: syncError } = latestSyncResult;
   const sync = latestSync as SyncHistoryWithShop | null;
+  const { data: latestWorkflowExecution, error: workflowExecutionError } = latestWorkflowExecutionResult;
+  const latestExecution = latestWorkflowExecution as WorkflowExecutionWithWorkflow | null;
 
   if (ordersError || statsError) {
     console.error("Dashboard load failed:", ordersError ?? statsError);
@@ -69,6 +82,10 @@ export default async function DashboardPage({
 
   if (syncError) {
     console.error("Latest sync load failed:", syncError);
+  }
+
+  if (workflowExecutionError) {
+    console.error("Latest workflow execution load failed:", workflowExecutionError);
   }
 
   const stats = (statsRows as DashboardStats[])[0];
@@ -108,7 +125,7 @@ export default async function DashboardPage({
     <main className="mx-auto max-w-6xl p-6">
       <h1 className="mb-4 text-2xl font-semibold">Orders</h1>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Total Orders" value={Number(stats.total_orders)} />
         <StatCard label="Pending Orders" value={Number(stats.pending_orders)} />
         <StatCard label="Delivered Orders" value={Number(stats.delivered_orders)} />
@@ -137,6 +154,26 @@ export default async function DashboardPage({
               </div>
             ) : (
               <span className="text-base font-normal text-gray-400">No syncs yet</span>
+            )
+          }
+        />
+        <StatCard
+          label="Latest Workflow Execution"
+          value={
+            latestExecution ? (
+              <div className="space-y-0.5 text-sm font-normal">
+                <p className="font-semibold text-gray-900">
+                  {latestExecution.workflows?.name ?? "Unknown workflow"}
+                </p>
+                <p className="font-medium">
+                  <ExecutionStatusLabel entry={latestExecution} />
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatRelativeTime(new Date(latestExecution.started_at))}
+                </p>
+              </div>
+            ) : (
+              <span className="text-base font-normal text-gray-400">No executions yet</span>
             )
           }
         />

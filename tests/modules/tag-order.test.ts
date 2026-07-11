@@ -52,6 +52,18 @@ describe("tagOrderModule.run", () => {
     });
   });
 
+  it("treats a missing tags array on the order as empty, rather than throwing", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { orders: { data: null, error: null } },
+    });
+    holder.client = client;
+    const orderWithNoTags = { id: 1, tags: undefined } as unknown as Order;
+
+    await tagOrderModule.run(orderWithNoTags, { tags: ["priority"] }, {});
+
+    expect(builders.orders[0].update).toHaveBeenCalledWith({ tags: ["priority"] });
+  });
+
   it("de-duplicates a tag that's already present", async () => {
     const { client, builders } = createMockSupabase({
       responses: { orders: { data: null, error: null } },

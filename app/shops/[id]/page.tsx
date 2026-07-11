@@ -20,8 +20,10 @@ import { updateShopName, updateSyncFrequency, disconnectStore } from "../actions
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
 import { ShopHealthBadge } from "@/components/shop-health-badge";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
+import { ExecutionStatusLabel } from "@/components/execution-status-label";
 import type { ShopWithStats } from "@/types/shop";
 import type { SyncHistoryEntry } from "@/types/sync-history";
+import type { WorkflowExecutionWithWorkflow, WorkflowWithStats } from "@/types/workflow";
 
 export const revalidate = 0;
 
@@ -63,8 +65,9 @@ export default async function ShopDetailPage({
     notFound();
   }
 
-  // A secondary section — if this fails, the rest of the page (which already
-  // loaded fine above) still renders; only this table shows an inline error.
+  // Secondary sections — if any of these fail, the rest of the page (which
+  // already loaded fine above) still renders; only that section shows an
+  // inline error.
   const { data: history, error: historyError } = await supabase
     .from("sync_history")
     .select("*")
@@ -75,6 +78,54 @@ export default async function ShopDetailPage({
 
   if (historyError) {
     console.error("Sync history load failed:", historyError);
+  }
+
+  // Same aggregate the Workflow List/Editor pages and /admin already read,
+  // filtered down to this shop in JS — same "fetch via RPC, then filter"
+  // shape used everywhere else this RPC is read from.
+  const { data: allWorkflowsStats, error: workflowsStatsError } = await supabase.rpc(
+    "get_workflows_with_stats"
+  );
+
+  if (workflowsStatsError) {
+    console.error("Shop workflow statistics load failed:", workflowsStatsError);
+  }
+
+  const shopWorkflows = ((allWorkflowsStats ?? []) as WorkflowWithStats[]).filter(
+    (w) => w.shop_id === shop.id
+  );
+  const activeWorkflowCount = shopWorkflows.filter((w) => w.is_active).length;
+  const totalExecutions = shopWorkflows.reduce((sum, w) => sum + w.execution_count, 0);
+  const totalSuccesses = shopWorkflows.reduce((sum, w) => sum + w.success_count, 0);
+  const lastExecutionAt = shopWorkflows.reduce<string | null>((latest, w) => {
+    if (!w.last_execution_at) return latest;
+    return !latest || w.last_execution_at > latest ? w.last_execution_at : latest;
+  }, null);
+
+  // Every execution across every one of this shop's workflows, newest
+  // first — same "recent N, no pagination" convention as Synchronization
+  // History above. Only queried once workflow ids are known: a shop with
+  // no workflows yet has nothing to look up.
+  let automationHistory: WorkflowExecutionWithWorkflow[] = [];
+  let automationHistoryError = false;
+  if (shopWorkflows.length > 0) {
+    const { data: executions, error: executionsError } = await supabase
+      .from("workflow_executions")
+      .select("*, workflows(name)")
+      .in(
+        "workflow_id",
+        shopWorkflows.map((w) => w.id)
+      )
+      .order("started_at", { ascending: false })
+      .limit(20)
+      .returns<WorkflowExecutionWithWorkflow[]>();
+
+    if (executionsError) {
+      console.error("Shop automation history load failed:", executionsError);
+      automationHistoryError = true;
+    } else {
+      automationHistory = executions ?? [];
+    }
   }
 
   return (
@@ -337,6 +388,74 @@ export default async function ShopDetailPage({
             </Table>
             {(!history || history.length === 0) && (
               <p className="p-4 text-center text-gray-500">No synchronization history yet.</p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Workflow Engine integration — same "statistics row above a recent-
+          activity table" shape as the Workflow Editor page's own Statistics
+          + Execution History (Workflow Builder UI specification §7/§8),
+          scoped to every workflow that belongs to this shop instead of one. */}
+      <div className="rounded-lg border bg-white p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Automation</h2>
+          <Link href={`/shops/${shop.id}/workflows`} className="text-sm text-blue-600 hover:underline">
+            Manage Workflows →
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard label="Active Workflows" value={activeWorkflowCount} />
+          <StatCard label="Total Executions" value={totalExecutions} />
+          <StatCard
+            label="Success Rate"
+            value={totalExecutions > 0 ? `${Math.round((totalSuccesses / totalExecutions) * 100)}%` : "—"}
+          />
+          <StatCard
+            label="Last Execution"
+            value={lastExecutionAt ? formatRelativeTime(new Date(lastExecutionAt)) : "Never"}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-white p-6">
+        <h2 className="mb-4 text-lg font-semibold">Automation Activity</h2>
+        {automationHistoryError ? (
+          <p className="text-sm text-red-600">Couldn&apos;t load automation activity.</p>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Workflow</TableHead>
+                  <TableHead>Step</TableHead>
+                  <TableHead>Module</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Duration</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {automationHistory.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell>{new Date(entry.started_at).toLocaleString()}</TableCell>
+                    <TableCell>{entry.workflows?.name ?? "—"}</TableCell>
+                    <TableCell>{entry.step_order}</TableCell>
+                    <TableCell>{entry.module_name}</TableCell>
+                    <TableCell>
+                      <ExecutionStatusLabel entry={entry} />
+                    </TableCell>
+                    <TableCell>{formatDuration(entry.duration_ms)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {automationHistory.length === 0 && (
+              <p className="p-4 text-center text-gray-500">
+                {shopWorkflows.length === 0
+                  ? "No workflows yet. Create one to automate what happens when an order comes in."
+                  : "No automation activity yet."}
+              </p>
             )}
           </>
         )}

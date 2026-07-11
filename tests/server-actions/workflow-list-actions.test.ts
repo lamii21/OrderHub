@@ -25,6 +25,16 @@ beforeEach(() => {
 });
 
 describe("createWorkflow", () => {
+  it("redirects to the shop list on an invalid shop_id, without touching the database", async () => {
+    const { client } = createMockSupabase();
+    holder.client = client;
+
+    await expect(
+      createWorkflow(formData({ shop_id: "abc", name: "Welcome flow", trigger_event: "order.created" }))
+    ).rejects.toThrow(/REDIRECT:\/shops\?error=/);
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
   it("redirects with an error on an empty name, without touching the database", async () => {
     const { client } = createMockSupabase();
     holder.client = client;
@@ -72,6 +82,26 @@ describe("createWorkflow", () => {
 });
 
 describe("deleteWorkflow", () => {
+  it("redirects to the shop list on an invalid shop_id, without touching the database", async () => {
+    const { client } = createMockSupabase();
+    holder.client = client;
+
+    await expect(
+      deleteWorkflow(formData({ shop_id: "abc", workflow_id: "42" }))
+    ).rejects.toThrow(/REDIRECT:\/shops\?error=/);
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("redirects to the workflow list on an invalid workflow_id, without touching the database", async () => {
+    const { client } = createMockSupabase();
+    holder.client = client;
+
+    await expect(
+      deleteWorkflow(formData({ shop_id: "1", workflow_id: "abc" }))
+    ).rejects.toThrow("REDIRECT:/shops/1/workflows?error=" + encodeURIComponent("Invalid workflow."));
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
   it("deletes the workflow and redirects with deleted=1 (steps cascade in the database)", async () => {
     const { client, builders } = createMockSupabase({
       responses: { workflows: { data: null, error: null } },

@@ -12,21 +12,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { getEventTypeLabel } from "@/lib/events/types";
+import { formatRelativeTime } from "@/lib/utils";
 import { deleteWorkflow } from "./actions";
 import { activateWorkflow, deactivateWorkflow } from "./[workflowId]/actions";
 import type { ShopWithStats } from "@/types/shop";
+import type { WorkflowWithStats } from "@/types/workflow";
 
 export const revalidate = 0;
 
 type SearchParams = { deleted?: string; error?: string };
-
-type WorkflowRow = {
-  id: number;
-  name: string;
-  trigger_event: string;
-  is_active: boolean;
-  workflow_steps: { id: number }[];
-};
 
 export default async function WorkflowListPage({
   params,
@@ -57,12 +52,11 @@ export default async function WorkflowListPage({
     notFound();
   }
 
-  const { data: workflows, error: workflowsError } = await supabase
-    .from("workflows")
-    .select("id, name, trigger_event, is_active, workflow_steps(id)")
-    .eq("shop_id", shop.id)
-    .order("created_at", { ascending: false })
-    .returns<WorkflowRow[]>();
+  // Same aggregate the Workflow Editor's Statistics section and /admin's
+  // Workflow Statistics table already read (UI specification §1/§8) —
+  // filtered down to this shop in JS, same "fetch via RPC, then filter"
+  // shape as the shop lookup above.
+  const { data: workflowsStats, error: workflowsError } = await supabase.rpc("get_workflows_with_stats");
 
   if (workflowsError) {
     console.error("Workflow list load failed:", workflowsError);
@@ -71,8 +65,10 @@ export default async function WorkflowListPage({
     );
   }
 
+  const workflows = ((workflowsStats ?? []) as WorkflowWithStats[]).filter((w) => w.shop_id === shop.id);
+
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-6">
+    <main className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{shop.name} — Workflows</h1>
@@ -99,7 +95,7 @@ export default async function WorkflowListPage({
         </p>
       )}
 
-      <div className="rounded-lg border bg-white">
+      <div className="overflow-x-auto rounded-lg border bg-white">
         <Table>
           <TableHeader>
             <TableRow>
@@ -107,11 +103,13 @@ export default async function WorkflowListPage({
               <TableHead>Trigger Event</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Steps</TableHead>
+              <TableHead>Last Run</TableHead>
+              <TableHead>Success Rate</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(workflows ?? []).map((workflow) => (
+            {workflows.map((workflow) => (
               <TableRow key={workflow.id}>
                 <TableCell>
                   <Link
@@ -121,7 +119,7 @@ export default async function WorkflowListPage({
                     {workflow.name}
                   </Link>
                 </TableCell>
-                <TableCell className="font-mono text-xs">{workflow.trigger_event}</TableCell>
+                <TableCell className="text-xs">{getEventTypeLabel(workflow.trigger_event)}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -133,7 +131,15 @@ export default async function WorkflowListPage({
                     {workflow.is_active ? "Active" : "Draft"}
                   </span>
                 </TableCell>
-                <TableCell>{workflow.workflow_steps.length}</TableCell>
+                <TableCell>{workflow.step_count}</TableCell>
+                <TableCell>
+                  {workflow.last_execution_at ? formatRelativeTime(new Date(workflow.last_execution_at)) : "Never"}
+                </TableCell>
+                <TableCell>
+                  {workflow.execution_count > 0
+                    ? `${Math.round((workflow.success_count / workflow.execution_count) * 100)}%`
+                    : "—"}
+                </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <Link
@@ -167,9 +173,9 @@ export default async function WorkflowListPage({
             ))}
           </TableBody>
         </Table>
-        {(workflows ?? []).length === 0 && (
+        {workflows.length === 0 && (
           <p className="p-6 text-center text-gray-500">
-            No workflows yet. Create one to automate what happens when an order event occurs.
+            No workflows yet. Create one to automate what happens when an order comes in.
           </p>
         )}
       </div>

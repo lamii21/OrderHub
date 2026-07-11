@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { mockFetchSequence } from "../mocks/fetch";
 import { webhookModule } from "@/lib/automation-modules/webhook";
+import { mockedLookup } from "../mocks/dns";
 import type { Order } from "@/types/order";
 
 const order = { id: 1, shop_id: 7, shops: { name: "Acme", platform: "Shopify" } } as Order;
@@ -12,6 +13,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  mockedLookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
 });
 
 describe("webhookModule.validateConfig", () => {
@@ -19,10 +21,25 @@ describe("webhookModule.validateConfig", () => {
     expect(webhookModule.validateConfig!({ url: "not a url" })).toMatch(/valid http/);
   });
 
+  // Regression test for the SSRF fix: a literal private IP is caught
+  // synchronously, at config-save time, before a merchant can even save
+  // the step.
+  it("rejects a URL pointing at a private/internal address", () => {
+    expect(webhookModule.validateConfig!({ url: "http://169.254.169.254/steal" })).toMatch(
+      /not allowed/i
+    );
+  });
+
   it("rejects an unsupported method", () => {
     expect(webhookModule.validateConfig!({ url: "https://example.com", method: "GET" })).toMatch(
       /method must be one of/
     );
+  });
+
+  it("rejects headers that aren't an object", () => {
+    expect(
+      webhookModule.validateConfig!({ url: "https://example.com", headers: "not-an-object" })
+    ).toMatch(/headers must be an object/);
   });
 
   it("accepts a bare https URL (method/headers optional)", () => {
@@ -91,5 +108,22 @@ describe("webhookModule.run", () => {
     const result = await webhookModule.run(order, { url: "https://example.com/hook" }, {});
 
     expect(result).toEqual({ success: false, message: "Webhook request timed out." });
+  });
+
+  // Regression test for the SSRF fix: a hostname that resolves (via DNS,
+  // not just a literal IP) to a private address is caught here even though
+  // it already passed validateConfig() at save time — a config saved
+  // before this check existed, or a hostname that now resolves
+  // differently, is still blocked right before the request would be made.
+  it("never calls fetch() when the URL resolves to a private address", async () => {
+    mockedLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await webhookModule.run(order, { url: "https://internal.example.com/hook" }, {});
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/not allowed/i);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

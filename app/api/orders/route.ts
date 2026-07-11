@@ -15,6 +15,24 @@ function isValidApiKey(provided: string | null): boolean {
   return matchesAnySecret(provided, "API_SECRET", "API_SECRET_PREVIOUS");
 }
 
+// Per-shop alternative to the one global API_SECRET above: every shop has
+// its own webhook_secret (schema.sql, "Per-shop webhook secret"), so a
+// caller sending one of those instead of the global secret is
+// unambiguously scoped to exactly that shop — no sheet_id-based resolution
+// needed, and closes the gap where possessing the one shared secret let a
+// caller write orders against (or spam-create) any shop. Checked first,
+// before the global secret: this is a plain equality lookup on a unique,
+// indexed column, and returning null here for a caller not using a
+// per-shop secret falls through to the existing global-secret + sheet_id
+// flow with no change in behavior for it.
+async function findShopByWebhookSecret(provided: string | null): Promise<{ id: number } | null> {
+  if (!provided) return null;
+
+  const { data } = await supabase.from("shops").select("id").eq("webhook_secret", provided).maybeSingle();
+
+  return data;
+}
+
 // The one API_SECRET is shared by every Apps Script deployment calling
 // this endpoint (see the audit that flagged this — a per-shop secret would
 // need a bigger provisioning change), so rate limiting keys on the caller's
@@ -34,7 +52,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!isValidApiKey(request.headers.get("x-api-key"))) {
+  const providedKey = request.headers.get("x-api-key");
+  const shopByWebhookSecret = await findShopByWebhookSecret(providedKey);
+
+  if (!shopByWebhookSecret && !isValidApiKey(providedKey)) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -50,20 +71,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: validationError }, { status: 400 });
   }
 
+  // A per-shop secret already resolves unambiguously to one real shop —
+  // skips the sheet_id-based upsert entirely for that case, since there's
+  // nothing to create or match. The legacy global-secret path is
+  // completely unchanged: same upsert, same fields, same behavior as
+  // before this fix.
   let shop: { id: number };
-  try {
-    shop = await createOrUpdateShop({
-      name: String(body.shop_name ?? ""),
-      platform: String(body.platform ?? ""),
-      sheetId: (body.sheet_id as string | undefined) ?? null,
-      sheetName: (body.sheet_name as string | undefined) ?? null,
-    });
-  } catch (err) {
-    console.error("Webhook: failed to upsert shop:", err);
-    return NextResponse.json(
-      { success: false, error: "Could not save the order." },
-      { status: 500 }
-    );
+  if (shopByWebhookSecret) {
+    shop = shopByWebhookSecret;
+  } else {
+    try {
+      shop = await createOrUpdateShop({
+        name: String(body.shop_name ?? ""),
+        platform: String(body.platform ?? ""),
+        sheetId: (body.sheet_id as string | undefined) ?? null,
+        sheetName: (body.sheet_name as string | undefined) ?? null,
+      });
+    } catch (err) {
+      console.error("Webhook: failed to upsert shop:", err);
+      return NextResponse.json(
+        { success: false, error: "Could not save the order." },
+        { status: 500 }
+      );
+    }
   }
 
   // Resolves this order's product_id once, at write time, so its stats stay

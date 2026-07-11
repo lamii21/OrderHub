@@ -14,6 +14,25 @@ type LogLevel = "info" | "warn" | "error";
 
 type LogFields = Record<string, unknown>;
 
+// Lets a production deployment wire up Sentry/Bugsnag/whatever it already
+// pays for — in one place, at startup (instrumentation.ts is the natural
+// call site) — without this project taking on that dependency itself, same
+// "no new infrastructure by default" posture as the rest of this file.
+// Every logger.error() call below invokes it, if one's been registered;
+// with none registered (the default, and every environment this project
+// ships to today), this is a no-op and behavior is byte-for-byte the same
+// as before this hook existed. Deliberately not wired to logger.warn() —
+// warnings are expected, routine conditions (a rate limit, a stale cache
+// entry); forwarding every one of those to an error tracker would just be
+// noise a real integration would immediately have to filter back out.
+type ErrorReporter = (event: string, fields?: LogFields) => void;
+
+let errorReporter: ErrorReporter | null = null;
+
+export function setErrorReporter(reporter: ErrorReporter | null) {
+  errorReporter = reporter;
+}
+
 function write(level: LogLevel, event: string, fields?: LogFields) {
   const entry = {
     timestamp: new Date().toISOString(),
@@ -26,6 +45,14 @@ function write(level: LogLevel, event: string, fields?: LogFields) {
 
   if (level === "error") {
     console.error(line);
+    try {
+      errorReporter?.(event, fields);
+    } catch (err) {
+      // A broken error reporter must never take down the code path it was
+      // observing — same "logging is best-effort, never load-bearing"
+      // rule this whole file already follows.
+      console.error(JSON.stringify({ timestamp: new Date().toISOString(), level: "error", event: "logger.error_reporter_failed", cause: String(err) }));
+    }
   } else if (level === "warn") {
     console.warn(line);
   } else {

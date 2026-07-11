@@ -109,6 +109,36 @@ describe("getModuleCredentials", () => {
     expect(client.from).toHaveBeenCalledTimes(2);
   });
 
+  it("invalidateModuleCredentialsCache(shopId) clears every module cached for that shop, without touching other shops", async () => {
+    const { client } = createMockSupabase({
+      responses: {
+        module_credentials: [
+          { data: { credentials: { apiKey: "shop7-whatsapp-old" } }, error: null },
+          { data: { credentials: { apiKey: "shop7-email-old" } }, error: null },
+          { data: { credentials: { apiKey: "shop8-email" } }, error: null },
+          { data: { credentials: { apiKey: "shop7-whatsapp-new" } }, error: null },
+          { data: { credentials: { apiKey: "shop8-email" } }, error: null },
+        ],
+      },
+    });
+    holder.client = client;
+
+    await getModuleCredentials(7, "whatsapp");
+    await getModuleCredentials(7, "email");
+    await getModuleCredentials(8, "email");
+
+    invalidateModuleCredentialsCache(7);
+
+    const shop7WhatsappAfter = await getModuleCredentials(7, "whatsapp");
+    const shop8EmailAfter = await getModuleCredentials(8, "email");
+
+    expect(shop7WhatsappAfter).toEqual({ apiKey: "shop7-whatsapp-new" });
+    // Shop 8's entry survived the shop-7-scoped invalidation, so this is
+    // served from cache — no 5th query.
+    expect(shop8EmailAfter).toEqual({ apiKey: "shop8-email" });
+    expect(client.from).toHaveBeenCalledTimes(4);
+  });
+
   it("invalidateModuleCredentialsCache() forces the next lookup to hit the database again", async () => {
     const { client } = createMockSupabase({
       responses: {

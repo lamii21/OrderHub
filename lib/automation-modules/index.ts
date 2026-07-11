@@ -21,14 +21,10 @@ import { conditionModule } from "./condition";
 // Adding a 17th module tomorrow is one file + one line here — nothing in
 // the Execution Engine changes.
 //
-// WhatsApp/Delivery/Email/Google Sheets/Webhook/Tag Order/Archive/Update
-// Status/Notes are real: they validate config, call out (or write) for
-// real, and return a genuine structured result. Slack/ERP/CRM/SMS/AI
-// Agent/Delay/Condition are stubs — either no external API is connected to
-// this deployment yet, or (Delay/Condition) the Execution Engine doesn't
-// yet support the outcome vocabulary ("waiting"/"stop") their real
-// behavior needs. Every stub still validates its config for real; only
-// run() is a placeholder.
+// Every one of the 16 modules is real: each validates its config and
+// returns a genuine structured result. Delay/Condition specifically return
+// the "waiting"/"stop" outcomes the Execution Engine supports (see
+// ModuleResult.outcome) rather than calling out to any external provider.
 //
 // Unlike getConnector() (which throws when a platform is unregistered — a
 // hard misconfiguration sync can't proceed without), a missing automation
@@ -65,4 +61,80 @@ export function getAutomationModule(moduleName: string): AutomationModule | null
 // for the Connect Store form.
 export const AVAILABLE_MODULES = Object.keys(modules);
 
-export type { AutomationModule, ModuleResult, WorkflowContext } from "./types";
+// ==== Dynamic loading ====
+// getAutomationModule() above resolves a module name via a plain object
+// lookup, but every one of the 16 module files is still imported eagerly
+// at the top of this one — the whole registry (and every module's own
+// dependencies, e.g. googleapis for the Google Sheets module) loads
+// whenever anything imports lib/automation-modules, even a caller that
+// only ever needs one module. loadAutomationModule() below is a second,
+// additive way to resolve the same names: it only ever imports the one
+// file a given call actually asks for, via a real import(), so an
+// unused module's code and dependencies are never pulled in for a run
+// that doesn't touch it. Nothing existing is switched over to this —
+// lib/workflows/engine.ts and the Workflow Builder's Server Actions keep
+// calling the synchronous getAutomationModule() exactly as before; this
+// exists as the lazy-loading option for a future caller (or a future
+// migration of the engine itself) to adopt deliberately, not a change to
+// what already works today.
+type ModuleLoader = () => Promise<AutomationModule>;
+
+// One loader per entry in AVAILABLE_MODULES — see this file's own test for
+// the check that keeps the two lists from silently drifting apart as
+// modules are added. Each loader's .then() picks out that module's own
+// named export (every module file exports its implementation as
+// `<name>Module`, never a default export), which is the one piece dynamic
+// import() can't infer generically from the module name alone.
+const moduleLoaders: Record<string, ModuleLoader> = {
+  whatsapp: () => import("./whatsapp").then((m) => m.whatsappModule),
+  delivery: () => import("./delivery").then((m) => m.deliveryModule),
+  email: () => import("./email").then((m) => m.emailModule),
+  "google-sheets": () => import("./google-sheets").then((m) => m.googleSheetsModule),
+  webhook: () => import("./webhook").then((m) => m.webhookModule),
+  "tag-order": () => import("./tag-order").then((m) => m.tagOrderModule),
+  archive: () => import("./archive").then((m) => m.archiveModule),
+  "update-status": () => import("./update-status").then((m) => m.updateStatusModule),
+  notes: () => import("./notes").then((m) => m.notesModule),
+  slack: () => import("./slack").then((m) => m.slackModule),
+  erp: () => import("./erp").then((m) => m.erpModule),
+  crm: () => import("./crm").then((m) => m.crmModule),
+  sms: () => import("./sms").then((m) => m.smsModule),
+  "ai-agent": () => import("./ai-agent").then((m) => m.aiAgentModule),
+  delay: () => import("./delay").then((m) => m.delayModule),
+  condition: () => import("./condition").then((m) => m.conditionModule),
+};
+
+// Resolved modules are cached in memory after their first load — the JS
+// engine's own module registry already avoids re-evaluating the same
+// import() target twice, but caching the resolved value here also skips
+// the repeat microtask hop of awaiting an already-settled dynamic import
+// on every subsequent call for the same module.
+const loadedModules = new Map<string, AutomationModule>();
+
+// Same null-when-unregistered contract as getAutomationModule() — a
+// missing module is expected and recoverable (see that function's own
+// comment), never thrown.
+export async function loadAutomationModule(moduleName: string): Promise<AutomationModule | null> {
+  const cached = loadedModules.get(moduleName);
+  if (cached) {
+    return cached;
+  }
+
+  const loader = moduleLoaders[moduleName];
+  if (!loader) {
+    return null;
+  }
+
+  const moduleImpl = await loader();
+  loadedModules.set(moduleName, moduleImpl);
+  return moduleImpl;
+}
+
+// Test-only escape hatch — the module-scope Map otherwise carries a
+// loaded module across test cases that mock a different implementation
+// under the same name.
+export function __resetLoadedModulesCache() {
+  loadedModules.clear();
+}
+
+export type { AutomationModule, ModuleResult, ModuleOutcome, WorkflowContext } from "./types";

@@ -39,6 +39,15 @@ describe("emailModule.validateConfig", () => {
 });
 
 describe("emailModule.run", () => {
+  it("fails cleanly when the order has no shop_id", async () => {
+    const result = await emailModule.run(
+      { ...baseOrder, shop_id: null },
+      { subject: "Hi", body: "Body" },
+      {}
+    );
+    expect(result).toEqual({ success: false, message: "Order has no associated shop." });
+  });
+
   it("fails cleanly when the order has no customer_email", async () => {
     const result = await emailModule.run(
       { ...baseOrder, customer_email: null },
@@ -82,5 +91,34 @@ describe("emailModule.run", () => {
     const result = await emailModule.run(baseOrder, { subject: "Hi", body: "Body" }, {});
 
     expect(result).toEqual({ success: false, message: "Email request failed (HTTP 422)." });
+  });
+
+  it("omits data entirely when the Resend response has no message id", async () => {
+    getModuleCredentials.mockResolvedValue({ apiKey: "re_test", fromAddress: "shop@acme.com" });
+    mockFetchSequence([{ json: async () => ({}) }]);
+
+    const result = await emailModule.run(baseOrder, { subject: "Hi", body: "Body" }, {});
+
+    expect(result).toEqual({ success: true, message: "Email sent.", data: undefined });
+  });
+
+  it("reports a network-error failure without throwing", async () => {
+    getModuleCredentials.mockResolvedValue({ apiKey: "re_test", fromAddress: "shop@acme.com" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNRESET")));
+
+    const result = await emailModule.run(baseOrder, { subject: "Hi", body: "Body" }, {});
+
+    expect(result).toEqual({ success: false, message: "Email request failed (network error)." });
+  });
+
+  it("reports a timeout distinctly from a generic network error", async () => {
+    getModuleCredentials.mockResolvedValue({ apiKey: "re_test", fromAddress: "shop@acme.com" });
+    const abortError = new Error("This operation was aborted");
+    abortError.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+
+    const result = await emailModule.run(baseOrder, { subject: "Hi", body: "Body" }, {});
+
+    expect(result).toEqual({ success: false, message: "Email request timed out." });
   });
 });

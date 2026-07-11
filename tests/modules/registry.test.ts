@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { getAutomationModule, AVAILABLE_MODULES } from "@/lib/automation-modules";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  getAutomationModule,
+  AVAILABLE_MODULES,
+  loadAutomationModule,
+  __resetLoadedModulesCache,
+} from "@/lib/automation-modules";
 
 describe("automation module registry", () => {
   it("registers exactly the 16 modules from the Automation Modules catalog", () => {
@@ -47,5 +52,49 @@ describe("automation module registry", () => {
 
     const result = module.validateConfig({});
     expect(result === null || typeof result === "string").toBe(true);
+  });
+});
+
+describe("loadAutomationModule (dynamic loading)", () => {
+  beforeEach(() => {
+    __resetLoadedModulesCache();
+  });
+
+  it("has exactly one loader per module in AVAILABLE_MODULES — no drift between the two registries", async () => {
+    for (const name of AVAILABLE_MODULES) {
+      await expect(loadAutomationModule(name)).resolves.not.toBeNull();
+    }
+  });
+
+  it("returns null (never throws or rejects) for an unregistered module name", async () => {
+    await expect(loadAutomationModule("does-not-exist")).resolves.toBeNull();
+  });
+
+  it.each(AVAILABLE_MODULES)(
+    "resolves %s to the exact same implementation the static registry returns",
+    async (name) => {
+      const dynamic = await loadAutomationModule(name);
+      const staticModule = getAutomationModule(name);
+
+      expect(dynamic).toBe(staticModule);
+    }
+  );
+
+  it("caches a resolved module — a second call for the same name doesn't re-import", async () => {
+    const first = await loadAutomationModule("archive");
+    const second = await loadAutomationModule("archive");
+
+    expect(second).toBe(first);
+  });
+
+  it("__resetLoadedModulesCache clears the cache without changing what resolves", async () => {
+    const first = await loadAutomationModule("archive");
+    __resetLoadedModulesCache();
+    const second = await loadAutomationModule("archive");
+
+    // Same module implementation (modules are singletons either way), the
+    // cache reset only forces the lookup path to run again, not a
+    // different result.
+    expect(second).toBe(first);
   });
 });

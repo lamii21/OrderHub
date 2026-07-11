@@ -56,3 +56,16 @@ export function checkRateLimit(
 export function __resetRateLimitState() {
   buckets.clear();
 }
+
+// Shared by every caller of checkRateLimit() that needs to key on the
+// request's IP — Route Handlers (app/api/orders, app/api/cron/sync,
+// app/api/health) already each had their own copy of this exact 1-liner;
+// Server Actions read headers via next/headers's headers() instead of a
+// Request object, but the returned ReadonlyHeaders has the same .get()
+// shape, so one function covers both without needing separate versions.
+// Only used by call sites added after this helper existed — the 3 Route
+// Handlers above keep their own local copies rather than being refactored
+// to use this one, so their already-tested behavior is untouched.
+export function getClientIp(headers: { get(name: string): string | null }): string {
+  return headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+}

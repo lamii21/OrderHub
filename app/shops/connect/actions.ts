@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { provisionShopSpreadsheet } from "@/lib/google-sheets";
@@ -8,6 +9,27 @@ import { isValidEmail } from "@/lib/validation";
 import { createOrUpdateShop } from "@/lib/shop";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { syncShopProducts, syncShopOrders, toPlatformCredentials, type ShopForSync } from "@/lib/sync";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
+
+// testConnection/syncProducts/syncOrders below each trigger a real,
+// server-initiated call to a third-party platform API — the app acting as
+// a proxy an authenticated caller could otherwise hammer to abuse that
+// third party's API quota, or to repeatedly probe a store_url with no
+// per-shop cost of their own (see lib/net-guard.ts's SSRF guard for the
+// destination side of that same concern). Rate limited by IP rather than
+// by shop_id: keys the limit to the actual caller, and still applies even
+// to a caller who's spraying different shop_ids from the same connection.
+async function checkExternalCallRateLimit(): Promise<boolean> {
+  const ip = getClientIp(await headers());
+  const result = checkRateLimit(`platform-call:${ip}`, { max: 20, windowMs: 60_000 });
+
+  if (!result.allowed) {
+    logger.warn("shops_connect.rate_limited", { ip });
+  }
+
+  return result.allowed;
+}
 
 export async function connectShop(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
@@ -68,6 +90,11 @@ export async function connectShop(formData: FormData) {
     );
   }
 
+  // Same "credential change is audit-worthy" precedent as
+  // shop.webhook_secret_regenerated/shop.disconnected — this is the one
+  // that actually stores a merchant's platform api_key/api_secret for the
+  // first time.
+  logger.audit("shop.connected", { shopId, platform });
   redirect(`/shops/connect?shop_id=${shopId}`);
 }
 
@@ -106,6 +133,13 @@ async function getShopCredentials(shopId: string): Promise<ShopForSync | null> {
 export async function testConnection(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
   const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+
+  if (!(await checkExternalCallRateLimit())) {
+    redirect(
+      `${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Too many requests. Please wait a moment and try again.")}`
+    );
+  }
+
   const shop = await getShopCredentials(shopId);
 
   if (!shop) {
@@ -162,6 +196,8 @@ export async function reconnectShop(formData: FormData) {
     );
   }
 
+  logger.audit("shop.reconnected", { shopId, platform });
+
   // Lands back in the same "shop_id" success branch /shops/connect/page.tsx
   // already renders after a fresh connectShop() — Test Connection/Sync
   // Products/Sync Orders action cards, with no new UI needed for this path.
@@ -176,6 +212,13 @@ export async function reconnectShop(formData: FormData) {
 export async function syncProducts(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
   const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+
+  if (!(await checkExternalCallRateLimit())) {
+    redirect(
+      `${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Too many requests. Please wait a moment and try again.")}`
+    );
+  }
+
   const shop = await getShopCredentials(shopId);
 
   if (!shop) {
@@ -198,6 +241,13 @@ export async function syncProducts(formData: FormData) {
 export async function syncOrders(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
   const redirectTo = String(formData.get("redirect_to") ?? "/shops/connect");
+
+  if (!(await checkExternalCallRateLimit())) {
+    redirect(
+      `${redirectTo}?shop_id=${shopId}&error=${encodeURIComponent("Too many requests. Please wait a moment and try again.")}`
+    );
+  }
+
   const shop = await getShopCredentials(shopId);
 
   if (!shop) {

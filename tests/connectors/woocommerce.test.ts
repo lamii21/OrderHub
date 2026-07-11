@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { woocommerceConnector } from "@/lib/platforms/woocommerce";
 import { mockFetchSequence } from "../mocks/fetch";
+import { mockedLookup } from "../mocks/dns";
 
 const credentials = {
   storeUrl: "https://acme.example.com",
@@ -10,6 +11,26 @@ const credentials = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockedLookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+});
+
+// Regression test for the SSRF fix — see tests/connectors/shopify.test.ts's
+// equivalent block for the full reasoning.
+describe("woocommerceConnector — SSRF guard", () => {
+  it("never calls fetch() for a store_url that is a literal private IP", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      woocommerceConnector.testConnection({
+        storeUrl: "192.168.1.1",
+        apiKey: "ck_test",
+        apiSecret: "cs_test",
+      })
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("woocommerceConnector.testConnection", () => {
@@ -63,6 +84,46 @@ describe("woocommerceConnector.fetchProducts", () => {
     mockFetchSequence([{ ok: false, status: 500 }]);
     await expect(woocommerceConnector.fetchProducts(credentials)).rejects.toThrow(
       "WooCommerce API error: 500"
+    );
+  });
+
+  it("falls back to null for a missing sku/description/price, rather than an empty string", async () => {
+    mockFetchSequence([
+      { json: async () => [{ id: 6, name: "Plain", sku: "", description: null, price: "", stock_quantity: null }] },
+    ]);
+
+    const products = await woocommerceConnector.fetchProducts(credentials);
+
+    expect(products[0].sku).toBeNull();
+    expect(products[0].description).toBeNull();
+    expect(products[0].price).toBeNull();
+  });
+
+  it("follows the Link header's rel=\"next\" URL across pages until it's absent", async () => {
+    const fetchMock = mockFetchSequence([
+      {
+        json: async () => [{ id: 1, name: "A", sku: null, description: null, price: "1", stock_quantity: 1 }],
+        headers: { link: '<https://acme.example.com/wp-json/wc/v3/products?page=2>; rel="next"' },
+      },
+      {
+        json: async () => [{ id: 2, name: "B", sku: null, description: null, price: "2", stock_quantity: 2 }],
+      },
+    ]);
+
+    const products = await woocommerceConnector.fetchProducts(credentials);
+
+    expect(products).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe("https://acme.example.com/wp-json/wc/v3/products?page=2");
+  });
+
+  it("reports a timed-out request distinctly, not a generic network error", async () => {
+    const abortError = new Error("This operation was aborted");
+    abortError.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+
+    await expect(woocommerceConnector.fetchProducts(credentials)).rejects.toThrow(
+      "WooCommerce request timed out after 15s"
     );
   });
 });
