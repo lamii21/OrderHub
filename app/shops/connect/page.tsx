@@ -1,18 +1,24 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { connectShop, testConnection, syncProducts, syncOrders, reconnectShop } from "./actions";
+import { getGoogleConnectionStatus } from "@/lib/google-oauth";
+import { connectShop, testConnection, reconnectShop } from "./actions";
 import { FormField } from "@/components/form-field";
 import { SheetCreatedPanel } from "@/components/sheet-created-panel";
 import { SubmitButton } from "@/components/submit-button";
 import { ActionCard } from "@/components/action-card";
+import { SyncActionsPanel } from "@/components/sync-actions-panel";
+import { GoogleAccountCard } from "@/components/google-account-card";
 import { SUPPORTED_PLATFORMS } from "@/lib/platforms";
 
 type SearchParams = {
   shop_id?: string;
   reconnect?: string;
   test?: string;
+  connection_test?: string;
   products_synced?: string;
   orders_synced?: string;
   error?: string;
+  google_connected?: string;
+  google_error?: string;
 };
 
 export default async function ConnectStorePage({
@@ -64,6 +70,21 @@ export default async function ConnectStorePage({
           description="A Google Sheet was created and linked to this shop."
         />
 
+        {params.connection_test === "success" && (
+          <p className="rounded-md border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-800">
+            ✅ Store successfully connected.
+            <br />
+            Connection verified.
+          </p>
+        )}
+        {params.connection_test === "failed" && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-800">
+            ⚠ Store has been saved but the connection test failed.
+            <br />
+            Please verify your credentials.
+          </p>
+        )}
+
         {params.error && (
           <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {decodeURIComponent(params.error)}
@@ -85,33 +106,14 @@ export default async function ConnectStorePage({
           )}
         </ActionCard>
 
-        <ActionCard
-          title="Sync Products"
-          action={syncProducts}
+        <SyncActionsPanel
           shopId={shop.id}
-          buttonLabel="Sync Products Now"
-          pendingLabel="Syncing products…"
-        >
-          {params.products_synced !== undefined && (
-            <p className="mb-2 text-sm text-gray-600">
-              Synced {params.products_synced} product(s) from {shop.platform ?? "the store"}.
-            </p>
-          )}
-        </ActionCard>
-
-        <ActionCard
-          title="Sync Orders"
-          action={syncOrders}
-          shopId={shop.id}
-          buttonLabel="Sync Orders Now"
-          pendingLabel="Syncing orders…"
-        >
-          {params.orders_synced !== undefined && (
-            <p className="mb-2 text-sm text-gray-600">
-              Sent {params.orders_synced} new order line(s) to the Google Sheet.
-            </p>
-          )}
-        </ActionCard>
+          platform={shop.platform}
+          sheetId={shop.sheet_id}
+          productsSynced={params.products_synced}
+          ordersSynced={params.orders_synced}
+          continueHref={`/shops/connect?shop_id=${shop.id}`}
+        />
       </main>
     );
   }
@@ -122,15 +124,40 @@ export default async function ConnectStorePage({
     );
   }
 
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const googleStatus = user
+    ? await getGoogleConnectionStatus(user.id)
+    : { connected: false, email: null };
+
   return (
-    <main className="mx-auto max-w-md p-6">
-      <h1 className="mb-4 text-2xl font-semibold">
+    <main className="mx-auto max-w-md space-y-6 p-6">
+      <h1 className="text-2xl font-semibold">
         {reconnectTarget ? `Reconnect "${reconnectTarget.name}"` : "Connect Store"}
       </h1>
       {params.error && (
-        <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {decodeURIComponent(params.error)}
         </p>
+      )}
+      {params.google_connected && (
+        <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Google account connected.
+        </p>
+      )}
+      {params.google_error && (
+        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {decodeURIComponent(params.google_error)}
+        </p>
+      )}
+      {!reconnectTarget && (
+        <GoogleAccountCard
+          connected={googleStatus.connected}
+          email={googleStatus.email}
+          redirectTo="/shops/connect"
+        />
       )}
       <form
         action={reconnectTarget ? reconnectShop : connectShop}
@@ -181,17 +208,6 @@ export default async function ConnectStorePage({
           type="password"
           hint="Only WooCommerce needs this — your Consumer Secret. Leave blank for Shopify or YouCan."
         />
-        {!reconnectTarget && (
-          <FormField
-            id="owner_email"
-            name="owner_email"
-            label="Your Google Account Email"
-            type="email"
-            required
-            placeholder="you@gmail.com"
-            hint="The new spreadsheet will be shared with this address so you can open and edit it."
-          />
-        )}
         <SubmitButton pendingLabel={reconnectTarget ? "Reconnecting store…" : "Connecting store…"}>
           {reconnectTarget ? "Reconnect Store" : "Connect Store"}
         </SubmitButton>

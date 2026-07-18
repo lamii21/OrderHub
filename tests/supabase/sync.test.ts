@@ -172,7 +172,7 @@ describe("syncShopOrders", () => {
     const result = await syncShopOrders(baseShop);
 
     expect(result).toEqual({ success: true, count: 1 });
-    expect(appendOrderRows).toHaveBeenCalledWith("sheet-abc", [
+    expect(appendOrderRows).toHaveBeenCalledWith(1, "sheet-abc", [
       ["Amina", "0600000000", "Rabat", "1 Rue X", "T-Shirt", 1, 19.99],
     ]);
     // Cursor is the newest createdAt + 1 second, not wall-clock "now".

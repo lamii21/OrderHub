@@ -11,10 +11,10 @@ const holder = vi.hoisted(() => ({
   serviceClient: undefined as unknown,
 }));
 const headersMock = vi.hoisted(() => ({ ip: "203.0.113.5" }));
-const { getConnector, provisionShopSpreadsheet, createOrUpdateShop, syncShopProducts, syncShopOrders, toPlatformCredentials } =
+const { getConnector, provisionShopSpreadsheetOrSkip, createOrUpdateShop, syncShopProducts, syncShopOrders, toPlatformCredentials } =
   vi.hoisted(() => ({
     getConnector: vi.fn(),
-    provisionShopSpreadsheet: vi.fn(),
+    provisionShopSpreadsheetOrSkip: vi.fn(),
     createOrUpdateShop: vi.fn(),
     syncShopProducts: vi.fn(),
     syncShopOrders: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 vi.mock("@/lib/platforms", () => ({ getConnector, SUPPORTED_PLATFORMS: ["Shopify", "WooCommerce", "YouCan"] }));
-vi.mock("@/lib/google-sheets", () => ({ provisionShopSpreadsheet }));
+vi.mock("@/lib/google-sheets", () => ({ provisionShopSpreadsheetOrSkip }));
 vi.mock("@/lib/shop", () => ({ createOrUpdateShop }));
 vi.mock("@/lib/sync", () => ({ syncShopProducts, syncShopOrders, toPlatformCredentials }));
 
@@ -77,7 +77,7 @@ function setServiceClient(shopData: unknown = ownedShop, error: unknown = null) 
 
 beforeEach(() => {
   getConnector.mockReset();
-  provisionShopSpreadsheet.mockReset();
+  provisionShopSpreadsheetOrSkip.mockReset();
   createOrUpdateShop.mockReset();
   syncShopProducts.mockReset();
   syncShopOrders.mockReset();
@@ -96,14 +96,13 @@ describe("connectShop", () => {
     platform: "Shopify",
     store_url: "https://acme.myshopify.com",
     api_key: "key-1",
-    owner_email: "owner@example.com",
   };
 
   it("redirects with an error when a required field is missing", async () => {
     await expect(connectShop(formData({ ...base, api_key: "" }))).rejects.toThrow(
       /REDIRECT:\/shops\/connect\?error=.*all%20required/
     );
-    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
+    expect(provisionShopSpreadsheetOrSkip).not.toHaveBeenCalled();
   });
 
   it("redirects with an error for an unsupported platform", async () => {
@@ -112,27 +111,23 @@ describe("connectShop", () => {
     );
   });
 
-  it("redirects with an error for an invalid owner email", async () => {
-    await expect(connectShop(formData({ ...base, owner_email: "not-an-email" }))).rejects.toThrow(
-      /REDIRECT:\/shops\/connect\?error=.*valid%20Google%20account/
-    );
-  });
-
   it("redirects to /login when there is no authenticated user", async () => {
     setUserClient(null);
 
     await expect(connectShop(formData(base))).rejects.toThrow("REDIRECT:/login");
-    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
+    expect(provisionShopSpreadsheetOrSkip).not.toHaveBeenCalled();
   });
 
   it("provisions the spreadsheet, creates the shop with store credentials, and redirects with its id", async () => {
-    provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-1", name: "Acme" });
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-1", name: "Acme" });
     createOrUpdateShop.mockResolvedValue({ id: 42 });
+    getConnector.mockReturnValue({ testConnection: vi.fn().mockResolvedValue(true) });
 
     await expect(connectShop(formData({ ...base, api_secret: "secret-1" }))).rejects.toThrow(
-      "REDIRECT:/shops/connect?shop_id=42"
+      "REDIRECT:/shops/connect?shop_id=42&connection_test=success"
     );
 
+    expect(provisionShopSpreadsheetOrSkip).toHaveBeenCalledWith("user-1", "Acme", "Shopify");
     expect(createOrUpdateShop).toHaveBeenCalledWith({
       name: "Acme",
       platform: "Shopify",
@@ -146,8 +141,78 @@ describe("connectShop", () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"shop.connected"'));
   });
 
+  // The UX gap this closes: previously a shop with a typo'd token still
+  // showed as "connected" until the merchant separately clicked Test
+  // Connection. Reuses the exact same connector.testConnection() call the
+  // manual button already makes (verifyStoreConnection in
+  // app/shops/connect/actions.ts) — no new validation logic, just run
+  // automatically and surfaced immediately on the success page.
+  it("automatically verifies the connection and redirects with connection_test=success when it works", async () => {
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-1", name: "Acme" });
+    createOrUpdateShop.mockResolvedValue({ id: 42 });
+    const testConnectionMock = vi.fn().mockResolvedValue(true);
+    getConnector.mockReturnValue({ testConnection: testConnectionMock });
+
+    await expect(connectShop(formData({ ...base, api_secret: "secret-1" }))).rejects.toThrow(
+      "REDIRECT:/shops/connect?shop_id=42&connection_test=success"
+    );
+
+    expect(getConnector).toHaveBeenCalledWith("Shopify");
+    expect(testConnectionMock).toHaveBeenCalledWith({
+      storeUrl: "https://acme.myshopify.com",
+      apiKey: "key-1",
+      apiSecret: "secret-1",
+    });
+  });
+
+  it("redirects with connection_test=failed when the automatic verification fails, without blocking the save", async () => {
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-1", name: "Acme" });
+    createOrUpdateShop.mockResolvedValue({ id: 42 });
+    getConnector.mockReturnValue({ testConnection: vi.fn().mockResolvedValue(false) });
+
+    await expect(connectShop(formData(base))).rejects.toThrow(
+      "REDIRECT:/shops/connect?shop_id=42&connection_test=failed"
+    );
+
+    expect(createOrUpdateShop).toHaveBeenCalled();
+  });
+
+  it("redirects with connection_test=failed (never throws) when the verification call itself errors", async () => {
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-1", name: "Acme" });
+    createOrUpdateShop.mockResolvedValue({ id: 42 });
+    getConnector.mockReturnValue({
+      testConnection: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+    });
+
+    await expect(connectShop(formData(base))).rejects.toThrow(
+      "REDIRECT:/shops/connect?shop_id=42&connection_test=failed"
+    );
+  });
+
+  // Same "trust the mocked result, not the skip-vs-provision branching
+  // itself" scope as the equivalent test in shop-new-actions.test.ts —
+  // provisionShopSpreadsheetOrSkip (lib/google-sheets.ts) is what actually
+  // decides whether a missing/failed Google connection is swallowed; see
+  // tests/unit/google-sheets.test.ts for that.
+  it("still creates the shop when Google Sheets provisioning is skipped (no connected Google account)", async () => {
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: null, name: null });
+    createOrUpdateShop.mockResolvedValue({ id: 42 });
+
+    await expect(connectShop(formData(base))).rejects.toThrow("REDIRECT:/shops/connect?shop_id=42");
+
+    expect(createOrUpdateShop).toHaveBeenCalledWith({
+      name: "Acme",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+      storeUrl: "https://acme.myshopify.com",
+      apiKey: "key-1",
+    });
+  });
+
   it("omits apiSecret entirely (not an empty string) when none was submitted", async () => {
-    provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-1", name: "Acme" });
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-1", name: "Acme" });
     createOrUpdateShop.mockResolvedValue({ id: 42 });
 
     await expect(connectShop(formData(base))).rejects.toThrow();
@@ -157,7 +222,7 @@ describe("connectShop", () => {
   });
 
   it("redirects with a generic error (never the raw error) when provisioning or saving fails", async () => {
-    provisionShopSpreadsheet.mockRejectedValue(new Error("The caller does not have permission"));
+    provisionShopSpreadsheetOrSkip.mockRejectedValue(new Error("The caller does not have permission"));
 
     await expect(connectShop(formData(base))).rejects.toThrow(
       /REDIRECT:\/shops\/connect\?error=.*Could%20not%20create%20the%20shop/
@@ -278,9 +343,10 @@ describe("reconnectShop", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     const withShops = createMockSupabase({ responses: { shops: { data: null, error: null } } });
     holder.userClient = withShops.client;
+    getConnector.mockReturnValue({ testConnection: vi.fn().mockResolvedValue(true) });
 
     await expect(reconnectShop(formData({ ...base, api_secret: "secret-1" }))).rejects.toThrow(
-      "REDIRECT:/shops/connect?shop_id=1"
+      "REDIRECT:/shops/connect?shop_id=1&connection_test=success"
     );
 
     expect(withShops.builders.shops[0].update).toHaveBeenCalledWith({
@@ -293,6 +359,16 @@ describe("reconnectShop", () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"shop.reconnected"'));
 
     vi.useRealTimers();
+  });
+
+  it("also auto-verifies the connection on reconnect, same as a fresh connect", async () => {
+    const withShops = createMockSupabase({ responses: { shops: { data: null, error: null } } });
+    holder.userClient = withShops.client;
+    getConnector.mockReturnValue({ testConnection: vi.fn().mockResolvedValue(false) });
+
+    await expect(reconnectShop(formData(base))).rejects.toThrow(
+      "REDIRECT:/shops/connect?shop_id=1&connection_test=failed"
+    );
   });
 
   it("clears api_secret to null when none was submitted", async () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockSupabase } from "../mocks/supabase";
 
-const { provisionShopSpreadsheet, createOrUpdateShop } = vi.hoisted(() => ({
-  provisionShopSpreadsheet: vi.fn(),
+const { provisionShopSpreadsheetOrSkip, createOrUpdateShop } = vi.hoisted(() => ({
+  provisionShopSpreadsheetOrSkip: vi.fn(),
   createOrUpdateShop: vi.fn(),
 }));
 const holder = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -15,7 +15,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: vi.fn(async () => holder.client),
 }));
-vi.mock("@/lib/google-sheets", () => ({ provisionShopSpreadsheet }));
+vi.mock("@/lib/google-sheets", () => ({ provisionShopSpreadsheetOrSkip }));
 vi.mock("@/lib/shop", () => ({ createOrUpdateShop }));
 
 import { createShop } from "@/app/shops/new/actions";
@@ -27,59 +27,46 @@ function formData(fields: Record<string, string>) {
 }
 
 beforeEach(() => {
-  provisionShopSpreadsheet.mockReset();
+  provisionShopSpreadsheetOrSkip.mockReset();
   createOrUpdateShop.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 describe("createShop", () => {
   it("redirects with an error when the name is missing", async () => {
-    await expect(
-      createShop(formData({ name: "", platform: "Shopify", owner_email: "a@b.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*required/);
-    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
+    await expect(createShop(formData({ name: "", platform: "Shopify" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/new\?error=.*required/
+    );
+    expect(provisionShopSpreadsheetOrSkip).not.toHaveBeenCalled();
   });
 
   it("redirects with an error when the platform is missing", async () => {
-    await expect(
-      createShop(formData({ name: "Acme", platform: "", owner_email: "a@b.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*required/);
-  });
-
-  it("redirects with an error when the owner email is missing", async () => {
-    await expect(
-      createShop(formData({ name: "Acme", platform: "Shopify", owner_email: "" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*required/);
-  });
-
-  it("redirects with an error on an invalid owner email", async () => {
-    await expect(
-      createShop(formData({ name: "Acme", platform: "Shopify", owner_email: "not-an-email" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*valid%20Google%20account/);
-    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
+    await expect(createShop(formData({ name: "Acme", platform: "" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/new\?error=.*required/
+    );
   });
 
   it("redirects to /login when there is no authenticated user", async () => {
     const { client } = createMockSupabase({ user: null });
     holder.client = client;
 
-    await expect(
-      createShop(formData({ name: "Acme", platform: "Shopify", owner_email: "a@b.com" }))
-    ).rejects.toThrow("REDIRECT:/login");
-    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
+    await expect(createShop(formData({ name: "Acme", platform: "Shopify" }))).rejects.toThrow(
+      "REDIRECT:/login"
+    );
+    expect(provisionShopSpreadsheetOrSkip).not.toHaveBeenCalled();
   });
 
   it("provisions the spreadsheet, saves the shop under the logged-in user, and redirects with the new sheet_id", async () => {
     const { client } = createMockSupabase({ user: { id: "user-1" } });
     holder.client = client;
-    provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-123", name: "Acme Store" });
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-123", name: "Acme Store" });
     createOrUpdateShop.mockResolvedValue(undefined);
 
     await expect(
-      createShop(formData({ name: "Acme Store", platform: "Shopify", owner_email: "owner@example.com" }))
+      createShop(formData({ name: "Acme Store", platform: "Shopify" }))
     ).rejects.toThrow("REDIRECT:/shops/new?sheet_id=sheet-123");
 
-    expect(provisionShopSpreadsheet).toHaveBeenCalledWith("Acme Store", "Shopify", "owner@example.com");
+    expect(provisionShopSpreadsheetOrSkip).toHaveBeenCalledWith("user-1", "Acme Store", "Shopify");
     expect(createOrUpdateShop).toHaveBeenCalledWith({
       name: "Acme Store",
       platform: "Shopify",
@@ -89,26 +76,39 @@ describe("createShop", () => {
     });
   });
 
-  it("redirects with a generic error when provisioning the spreadsheet fails, without saving the shop", async () => {
+  // provisionShopSpreadsheetOrSkip() (lib/google-sheets.ts) is what actually
+  // decides whether a missing/failed Google connection is swallowed —
+  // mocked here exactly the way it behaves after a failure: resolves with
+  // nulls instead of rejecting. This test only proves createShop() does the
+  // right thing with that result (still creates the shop, still succeeds),
+  // not the skip branching itself (see tests/unit/google-sheets.test.ts).
+  it("still creates the shop when Google Sheets provisioning is skipped (no connected Google account)", async () => {
     const { client } = createMockSupabase({ user: { id: "user-1" } });
     holder.client = client;
-    provisionShopSpreadsheet.mockRejectedValue(new Error("The caller does not have permission"));
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: null, name: null });
+    createOrUpdateShop.mockResolvedValue(undefined);
 
     await expect(
-      createShop(formData({ name: "Acme", platform: "Shopify", owner_email: "owner@example.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*Could%20not%20create%20the%20shop/);
+      createShop(formData({ name: "Acme Store", platform: "Shopify" }))
+    ).rejects.toThrow("REDIRECT:/shops/new");
 
-    expect(createOrUpdateShop).not.toHaveBeenCalled();
+    expect(createOrUpdateShop).toHaveBeenCalledWith({
+      name: "Acme Store",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+    });
   });
 
-  it("redirects with a generic error (never the raw error) when saving the shop fails after provisioning succeeded", async () => {
+  it("redirects with a generic error when saving the shop fails after provisioning succeeded", async () => {
     const { client } = createMockSupabase({ user: { id: "user-1" } });
     holder.client = client;
-    provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-123", name: "Acme Store" });
+    provisionShopSpreadsheetOrSkip.mockResolvedValue({ id: "sheet-123", name: "Acme Store" });
     createOrUpdateShop.mockRejectedValue(new Error("duplicate key value violates unique constraint"));
 
     await expect(
-      createShop(formData({ name: "Acme", platform: "Shopify", owner_email: "owner@example.com" }))
+      createShop(formData({ name: "Acme", platform: "Shopify" }))
     ).rejects.toThrow(/REDIRECT:\/shops\/new\?error=.*Could%20not%20create%20the%20shop/);
   });
 });

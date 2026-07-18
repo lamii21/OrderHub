@@ -38,6 +38,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   <Link href="/shops" className="text-blue-600 hover:underline">
                     Shops
                   </Link>
+                  <Link href="/workflows" className="text-blue-600 hover:underline">
+                    Workflows
+                  </Link>
                   <Link href="/shops/new" className="text-blue-600 hover:underline">
                     New Shop
                   </Link>

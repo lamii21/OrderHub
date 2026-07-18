@@ -311,6 +311,14 @@ create policy "Users can view products for their own shops"
 -- and order counts are pre-aggregated in separate CTEs before joining back to
 -- shops, so a shop with both several products and several orders doesn't
 -- fan out into a cross-product that would inflate the counts/revenue.
+--
+-- Guarded even on this first definition: every later redefinition below
+-- already drops-then-creates when its return columns change, but re-running
+-- this whole file against a database that's only partially caught up (i.e.
+-- already has a later, wider version of this function installed) would
+-- otherwise fail right here with "cannot change return type of existing
+-- function" — Postgres can't CREATE OR REPLACE across a signature change.
+drop function if exists get_shops_with_stats();
 create or replace function get_shops_with_stats()
 returns table (
   id bigint,
@@ -474,11 +482,22 @@ create policy "Users can record status changes for their own orders"
 -- named "shopify_access_token" would be misleading, so they're renamed to
 -- generic names. Renames use a guarded DO block (not just "if not exists",
 -- which alter/rename doesn't support) so this file stays safe to re-run.
+--
+-- Each guard also checks the TARGET column doesn't already exist, not just
+-- that the source does — without that, re-running this file against a
+-- database where the rename already happened once hits "add column if not
+-- exists shopify_store_url" above (which doesn't know the migration already
+-- ran, and recreates the old column fresh), then fails right here with
+-- "column store_url already exists" the moment it tries to rename into a
+-- name that's already taken.
 do $$
 begin
   if exists (
     select 1 from information_schema.columns
     where table_name = 'shops' and column_name = 'shopify_store_url'
+  ) and not exists (
+    select 1 from information_schema.columns
+    where table_name = 'shops' and column_name = 'store_url'
   ) then
     alter table shops rename column shopify_store_url to store_url;
   end if;
@@ -486,6 +505,9 @@ begin
   if exists (
     select 1 from information_schema.columns
     where table_name = 'shops' and column_name = 'shopify_access_token'
+  ) and not exists (
+    select 1 from information_schema.columns
+    where table_name = 'shops' and column_name = 'api_key'
   ) then
     alter table shops rename column shopify_access_token to api_key;
   end if;
@@ -493,6 +515,9 @@ begin
   if exists (
     select 1 from information_schema.columns
     where table_name = 'shops' and column_name = 'shopify_last_synced_at'
+  ) and not exists (
+    select 1 from information_schema.columns
+    where table_name = 'shops' and column_name = 'last_synced_at'
   ) then
     alter table shops rename column shopify_last_synced_at to last_synced_at;
   end if;
@@ -500,6 +525,9 @@ begin
   if exists (
     select 1 from information_schema.columns
     where table_name = 'products' and column_name = 'shopify_product_id'
+  ) and not exists (
+    select 1 from information_schema.columns
+    where table_name = 'products' and column_name = 'platform_product_id'
   ) then
     alter table products rename column shopify_product_id to platform_product_id;
   end if;
@@ -787,6 +815,12 @@ alter table shops add column if not exists credentials_changed_at timestamptz;
 -- against sync_history. security invoker (the default) means this
 -- automatically inherits sync_history's existing "Users can view sync
 -- history for their own shops" RLS policy — no new policy needed.
+--
+-- Guarded on this first definition too — same "re-running against a
+-- database that already has the later, wider version installed" reasoning
+-- as get_shops_with_stats()'s own guard above; this function's return
+-- columns also change further down (see the drop before its 2nd definition).
+drop function if exists get_sync_performance_stats();
 create or replace function get_sync_performance_stats()
 returns table (
   avg_duration_ms numeric,
@@ -1820,3 +1854,66 @@ create policy "Users can view waits for their own workflows"
       select id from workflows where shop_id in (select id from shops where user_id = (select auth.uid()))
     )
   );
+
+-- ==== Google OAuth (per-user Google account connection) ====
+-- One row per app user who has connected their own Google account. Replaces
+-- the single shared service account previously used by lib/google-sheets.ts
+-- (google.auth.JWT), which failed for any real, non-Workspace Gmail user
+-- with "The user's Drive storage quota has been exceeded" — a service
+-- account has 0 bytes of its own Drive storage, and drive.files.copy()
+-- always creates the copy owned by the caller. Every spreadsheet is now
+-- provisioned inside the connecting user's own Drive via their OAuth
+-- refresh token, stored here encrypted at rest (see lib/crypto.ts).
+--
+-- Written by app/api/google/callback/route.ts using the service-role client
+-- (lib/supabase.ts), not the RLS-scoped one: that route is a redirect from
+-- google.com, not a same-origin form submission, so it shouldn't depend on
+-- the session cookie surviving that hop.
+create table if not exists google_accounts (
+  id bigint generated always as identity primary key,
+  user_id uuid not null unique references auth.users(id),
+  google_email text not null,
+  -- AES-256-GCM ciphertext (iv + authTag + ciphertext, base64), never the
+  -- raw token. Only the refresh token needs to persist — access tokens are
+  -- short-lived and googleapis' OAuth2 client fetches a fresh one on demand
+  -- once the refresh token is set as a credential.
+  encrypted_refresh_token text not null,
+  -- Cached short-lived access token + its expiry, purely an optimization
+  -- (skip a refresh round-trip when still valid) — never relied on as the
+  -- source of truth, encrypted_refresh_token is.
+  access_token text,
+  access_token_expires_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists google_accounts_user_id_idx on google_accounts (user_id);
+
+alter table google_accounts enable row level security;
+
+grant select, insert, update, delete on google_accounts to authenticated;
+
+drop policy if exists "Users can view their own google account" on google_accounts;
+create policy "Users can view their own google account"
+  on google_accounts for select
+  to authenticated
+  using (user_id = (select auth.uid()));
+
+drop policy if exists "Users can insert their own google account" on google_accounts;
+create policy "Users can insert their own google account"
+  on google_accounts for insert
+  to authenticated
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "Users can update their own google account" on google_accounts;
+create policy "Users can update their own google account"
+  on google_accounts for update
+  to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "Users can delete their own google account" on google_accounts;
+create policy "Users can delete their own google account"
+  on google_accounts for delete
+  to authenticated
+  using (user_id = (select auth.uid()));

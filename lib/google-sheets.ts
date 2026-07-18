@@ -1,53 +1,85 @@
 import { google } from "googleapis";
-import { requireEnv } from "@/lib/env";
+import { buildUserOAuth2Client, getUserIdForShop } from "@/lib/google-oauth";
+import { logger } from "@/lib/logger";
 
-// Server-only client (service account). Never import this from a "use client" component.
+// Everything about *using* an already-connected Google account to touch
+// Drive/Sheets. Credential-building itself (consent URL, code exchange,
+// per-user OAuth2 client) lives in lib/google-oauth.ts — this file only
+// ever takes a userId (or shopId, resolved to a userId) as input.
 //
-// Built lazily (only when a provisioning action actually runs), not at module
-// load: this integration is optional, and eagerly validating its env vars at
-// import time would make every page that transitively imports this file
-// (including unrelated ones) fail to even build/start if Google credentials
-// aren't configured yet.
-let auth: InstanceType<typeof google.auth.JWT> | null = null;
+// Previously used a single shared service account (google.auth.JWT) whose
+// drive.files.copy() call always failed for a real, non-Workspace Gmail
+// merchant with "The user's Drive storage quota has been exceeded" — a
+// service account has 0 bytes of its own Drive storage, and files.copy()
+// creates the copy owned by the caller. Every spreadsheet is now created
+// inside the connecting user's own Drive instead, which has real quota.
 
-function getAuth() {
-  if (!auth) {
-    auth = new google.auth.JWT({
-      email: requireEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-      key: requireEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY").replace(/\\n/g, "\n"),
-      // drive.file (not the full drive scope) — this service account only
-      // ever touches two kinds of files: the template it copies (must be
-      // explicitly shared with the service account email, which "opens" it
-      // for drive.file purposes) and the per-shop copies it creates itself.
-      // Narrower scope, same functionality, smaller blast radius if the
-      // service account key ever leaks.
-      scopes: [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/spreadsheets",
-      ],
-    });
+async function requireUserAuthClient(userId: string) {
+  const authClient = await buildUserOAuth2Client(userId);
+  if (!authClient) {
+    throw new Error("No connected Google account for this user");
   }
-  return auth;
+  return authClient;
 }
 
-// Duplicates the OrderHub spreadsheet template, fills in its Config tab, and
-// shares the copy with the merchant's own Google account (the service account
-// owns the copy, so without this share the merchant can't open it at all).
+// Matches apps-script/sync-orders.gs's COL layout exactly (columns A-H).
+const ORDERS_HEADER_ROW = [
+  "Customer Name",
+  "Customer Phone",
+  "Customer City",
+  "Customer Address",
+  "Product",
+  "Quantity",
+  "Price",
+  "Synced",
+];
+
+// If GOOGLE_SHEETS_TEMPLATE_ID is set, duplicates that template (keeping
+// whatever formatting/Apps Script binding it has) and fills its Config tab.
+// Otherwise creates a blank spreadsheet from scratch with the same two tabs
+// and Orders header row — the template is a convenience, not a requirement.
+// Either way, the file is created directly inside the connected user's own
+// Drive (via their OAuth credentials), so no separate "share" step is
+// needed afterward — unlike the old service-account flow, which had to
+// explicitly share the copy it owned with the merchant's email.
 export async function provisionShopSpreadsheet(
+  userId: string,
   shopName: string,
-  platform: string,
-  ownerEmail: string
-) {
-  const drive = google.drive({ version: "v3", auth: getAuth() });
-  const sheets = google.sheets({ version: "v4", auth: getAuth() });
+  platform: string
+): Promise<{ id: string; name: string }> {
+  const authClient = await requireUserAuthClient(userId);
+  const drive = google.drive({ version: "v3", auth: authClient });
+  const sheets = google.sheets({ version: "v4", auth: authClient });
 
-  const copy = await drive.files.copy({
-    fileId: requireEnv("GOOGLE_SHEETS_TEMPLATE_ID"),
-    requestBody: { name: shopName },
-  });
+  const templateId = process.env.GOOGLE_SHEETS_TEMPLATE_ID;
 
-  const spreadsheetId = copy.data.id!;
-  const spreadsheetName = copy.data.name!;
+  let spreadsheetId: string;
+  let spreadsheetName: string;
+
+  if (templateId) {
+    const copy = await drive.files.copy({
+      fileId: templateId,
+      requestBody: { name: shopName },
+    });
+    spreadsheetId = copy.data.id!;
+    spreadsheetName = copy.data.name!;
+  } else {
+    const created = await sheets.spreadsheets.create({
+      requestBody: {
+        properties: { title: shopName },
+        sheets: [{ properties: { title: "Orders" } }, { properties: { title: "Config" } }],
+      },
+    });
+    spreadsheetId = created.data.spreadsheetId!;
+    spreadsheetName = created.data.properties?.title ?? shopName;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: "Orders!A1:H1",
+      valueInputOption: "RAW",
+      requestBody: { values: [ORDERS_HEADER_ROW] },
+    });
+  }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -56,21 +88,58 @@ export async function provisionShopSpreadsheet(
     requestBody: { values: [[shopName], [platform]] },
   });
 
-  await drive.permissions.create({
-    fileId: spreadsheetId,
-    sendNotificationEmail: true,
-    requestBody: { role: "writer", type: "user", emailAddress: ownerEmail },
-  });
-
   return { id: spreadsheetId, name: spreadsheetName };
+}
+
+// The one shared entry point for both shop-creation flows (/shops/new,
+// /shops/connect) — replaces their direct provisionShopSpreadsheet() call so
+// neither duplicates this fallback behavior itself. Shop creation must
+// never block on Google: if the user hasn't connected a Google account yet,
+// or the API call fails for any reason, the shop is still created with no
+// spreadsheet — same graceful-degrade UX in every environment (this used to
+// be dev-only, back when the blocker was missing local credentials; now
+// that a first-time production user genuinely hasn't connected Google yet
+// either, the same "don't block" behavior applies everywhere). A banner/
+// link on the shop pages (components/google-account-card.tsx) is what gets
+// them to connect and regenerate later. Never logs the caught error itself
+// — same "never surface a raw error" rule this project applies elsewhere,
+// applied here to a log line instead of a user-facing message.
+export async function provisionShopSpreadsheetOrSkip(
+  userId: string,
+  shopName: string,
+  platform: string
+): Promise<{ id: string | null; name: string | null }> {
+  try {
+    return await provisionShopSpreadsheet(userId, shopName, platform);
+  } catch {
+    logger.warn("google_sheets.provisioning_skipped", { userId });
+    return { id: null, name: null };
+  }
 }
 
 // Appends rows to a shop's "Orders" tab, in the same column order the bound
 // Apps Script (sync-orders.gs) reads from. This is how Shopify order sync
 // hands off to the existing Sheet → Apps Script → webhook pipeline instead
 // of writing to Supabase directly.
-export async function appendOrderRows(spreadsheetId: string, rows: (string | number)[][]) {
-  const sheets = google.sheets({ version: "v4", auth: getAuth() });
+//
+// Takes shopId (not userId) because both callers of this function
+// (lib/sync.ts, lib/automation-modules/google-sheets.ts) have a shopId on
+// hand, not a userId — resolving it here via getUserIdForShop() avoids
+// adding userId to ShopForSync/SyncableShop or threading it through the
+// AutomationModule interface, which deliberately never carries shop/tenant
+// identity (see lib/automation-modules/types.ts).
+export async function appendOrderRows(
+  shopId: number,
+  spreadsheetId: string,
+  rows: (string | number)[][]
+) {
+  const userId = await getUserIdForShop(shopId);
+  if (!userId) {
+    throw new Error(`No owner found for shop ${shopId}`);
+  }
+
+  const authClient = await requireUserAuthClient(userId);
+  const sheets = google.sheets({ version: "v4", auth: authClient });
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -84,16 +153,22 @@ export async function appendOrderRows(spreadsheetId: string, rows: (string | num
 // Appends one row to any spreadsheet/tab the merchant chooses — backs the
 // Google Sheets automation module, which is a distinct, output-only use of
 // Sheets from the ingestion pipeline above (appendOrderRows/the Apps
-// Script). Same service account, same auth — the only new thing is that
-// the spreadsheet/tab is a per-step config value instead of the shop's own
-// provisioned sheet. Returns the updated range so the module can report
-// which row it wrote, same shape Google's API itself returns.
+// Script). Same shopId-to-userId resolution as appendOrderRows above.
+// Returns the updated range so the module can report which row it wrote,
+// same shape Google's API itself returns.
 export async function appendRowToSheet(
+  shopId: number,
   spreadsheetId: string,
   sheetName: string,
   row: (string | number)[]
 ): Promise<{ updatedRange?: string }> {
-  const sheets = google.sheets({ version: "v4", auth: getAuth() });
+  const userId = await getUserIdForShop(shopId);
+  if (!userId) {
+    throw new Error(`No owner found for shop ${shopId}`);
+  }
+
+  const authClient = await requireUserAuthClient(userId);
+  const sheets = google.sheets({ version: "v4", auth: authClient });
 
   const response = await sheets.spreadsheets.values.append({
     spreadsheetId,

@@ -3,9 +3,8 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { provisionShopSpreadsheet } from "@/lib/google-sheets";
+import { provisionShopSpreadsheetOrSkip } from "@/lib/google-sheets";
 import { getConnector, SUPPORTED_PLATFORMS } from "@/lib/platforms";
-import { isValidEmail } from "@/lib/validation";
 import { createOrUpdateShop } from "@/lib/shop";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { syncShopProducts, syncShopOrders, toPlatformCredentials, type ShopForSync } from "@/lib/sync";
@@ -31,30 +30,41 @@ async function checkExternalCallRateLimit(): Promise<boolean> {
   return result.allowed;
 }
 
+// Same connector.testConnection() call the manual "Test Connection" button
+// (below) already makes — reused here so connectShop/reconnectShop can run
+// it automatically right after saving credentials, instead of leaving a
+// merchant to discover a typo'd token only when a later sync fails. Never
+// throws: a network error or an unreachable store is a "failed" verification
+// result, not a reason to fail the save that already succeeded.
+async function verifyStoreConnection(
+  platform: string,
+  credentials: { storeUrl: string; apiKey: string; apiSecret?: string }
+): Promise<boolean> {
+  try {
+    return await getConnector(platform).testConnection(credentials);
+  } catch (err) {
+    console.error("Automatic connection verification failed:", err);
+    return false;
+  }
+}
+
 export async function connectShop(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const platform = String(formData.get("platform") ?? "").trim();
   const storeUrl = String(formData.get("store_url") ?? "").trim();
   const apiKey = String(formData.get("api_key") ?? "").trim();
   const apiSecret = String(formData.get("api_secret") ?? "").trim();
-  const ownerEmail = String(formData.get("owner_email") ?? "").trim();
 
-  if (!name || !platform || !storeUrl || !apiKey || !ownerEmail) {
+  if (!name || !platform || !storeUrl || !apiKey) {
     redirect(
       `/shops/connect?error=${encodeURIComponent(
-        "Shop name, platform, store URL, API key, and owner email are all required."
+        "Shop name, platform, store URL, and API key are all required."
       )}`
     );
   }
 
   if (!SUPPORTED_PLATFORMS.includes(platform)) {
     redirect(`/shops/connect?error=${encodeURIComponent("Unsupported platform.")}`);
-  }
-
-  if (!isValidEmail(ownerEmail)) {
-    redirect(
-      `/shops/connect?error=${encodeURIComponent("Please enter a valid Google account email.")}`
-    );
   }
 
   const userSupabase = await createSupabaseServerClient();
@@ -69,7 +79,9 @@ export async function connectShop(formData: FormData) {
   let shopId: number;
 
   try {
-    const sheet = await provisionShopSpreadsheet(name, platform, ownerEmail);
+    // Never blocks shop creation — see provisionShopSpreadsheetOrSkip's own
+    // comment (lib/google-sheets.ts).
+    const sheet = await provisionShopSpreadsheetOrSkip(user.id, name, platform);
     const shop = await createOrUpdateShop({
       name,
       platform,
@@ -95,7 +107,16 @@ export async function connectShop(formData: FormData) {
   // that actually stores a merchant's platform api_key/api_secret for the
   // first time.
   logger.audit("shop.connected", { shopId, platform });
-  redirect(`/shops/connect?shop_id=${shopId}`);
+
+  const connectionVerified = await verifyStoreConnection(platform, {
+    storeUrl,
+    apiKey,
+    ...(apiSecret && { apiSecret }),
+  });
+
+  redirect(
+    `/shops/connect?shop_id=${shopId}&connection_test=${connectionVerified ? "success" : "failed"}`
+  );
 }
 
 // Fetching the shop's credentials stays on the service-role client (per the
@@ -198,10 +219,19 @@ export async function reconnectShop(formData: FormData) {
 
   logger.audit("shop.reconnected", { shopId, platform });
 
+  const connectionVerified = await verifyStoreConnection(platform, {
+    storeUrl,
+    apiKey,
+    ...(apiSecret && { apiSecret }),
+  });
+
   // Lands back in the same "shop_id" success branch /shops/connect/page.tsx
   // already renders after a fresh connectShop() — Test Connection/Sync
-  // Products/Sync Orders action cards, with no new UI needed for this path.
-  redirect(`/shops/connect?shop_id=${shopId}`);
+  // Products/Sync Orders action cards, plus the same automatic connection
+  // banner, with no new UI needed for this path.
+  redirect(
+    `/shops/connect?shop_id=${shopId}&connection_test=${connectionVerified ? "success" : "failed"}`
+  );
 }
 
 // This Server Action and the /api/cron/sync route handler are the only two

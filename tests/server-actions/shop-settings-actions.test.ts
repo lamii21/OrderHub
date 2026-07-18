@@ -165,33 +165,34 @@ describe("updateNotificationSettings", () => {
 });
 
 describe("regenerateSpreadsheet", () => {
-  it("redirects with an error on an invalid owner email, without querying the shop", async () => {
-    const { client } = createMockSupabase();
+  it("redirects to /login when there is no authenticated user, without querying the shop", async () => {
+    const { client } = createMockSupabase({ user: null });
     holder.client = client;
 
-    await expect(
-      regenerateSpreadsheet(formData({ shop_id: "1", owner_email: "not-an-email" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/1\/settings\?error=.*valid%20Google%20account/);
+    await expect(regenerateSpreadsheet(formData({ shop_id: "1" }))).rejects.toThrow("REDIRECT:/login");
     expect(client.from).not.toHaveBeenCalled();
+    expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
   });
 
   it("redirects with an error when the shop can't be found (RLS-scoped lookup)", async () => {
     const { client } = createMockSupabase({
+      user: { id: "user-1" },
       responses: { shops: { data: null, error: null } },
     });
     holder.client = client;
 
-    await expect(
-      regenerateSpreadsheet(formData({ shop_id: "1", owner_email: "owner@example.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/1\/settings\?error=.*Shop%20not%20found/);
+    await expect(regenerateSpreadsheet(formData({ shop_id: "1" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/1\/settings\?error=.*Shop%20not%20found/
+    );
     expect(provisionShopSpreadsheet).not.toHaveBeenCalled();
   });
 
-  it("provisions a new spreadsheet for the existing shop's name/platform and points the shop at it", async () => {
+  it("provisions a new spreadsheet for the existing shop's name/platform under the logged-in user's Google account, and points the shop at it", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
     const { client, builders } = createMockSupabase({
+      user: { id: "user-1" },
       responses: {
         shops: [
           { data: { name: "Acme", platform: "Shopify" }, error: null },
@@ -202,11 +203,11 @@ describe("regenerateSpreadsheet", () => {
     holder.client = client;
     provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-999", name: "Acme" });
 
-    await expect(
-      regenerateSpreadsheet(formData({ shop_id: "1", owner_email: "owner@example.com" }))
-    ).rejects.toThrow("REDIRECT:/shops/1/settings?regenerated=1");
+    await expect(regenerateSpreadsheet(formData({ shop_id: "1" }))).rejects.toThrow(
+      "REDIRECT:/shops/1/settings?regenerated=1"
+    );
 
-    expect(provisionShopSpreadsheet).toHaveBeenCalledWith("Acme", "Shopify", "owner@example.com");
+    expect(provisionShopSpreadsheet).toHaveBeenCalledWith("user-1", "Acme", "Shopify");
     expect(builders.shops[1].update).toHaveBeenCalledWith({
       sheet_id: "sheet-999",
       sheet_name: "Acme",
@@ -217,20 +218,22 @@ describe("regenerateSpreadsheet", () => {
     vi.useRealTimers();
   });
 
-  it("redirects with an error (never the raw error) when provisioning fails", async () => {
+  it("redirects with an error (never the raw error) when provisioning fails (e.g. no connected Google account)", async () => {
     const { client } = createMockSupabase({
+      user: { id: "user-1" },
       responses: { shops: { data: { name: "Acme", platform: "Shopify" }, error: null } },
     });
     holder.client = client;
-    provisionShopSpreadsheet.mockRejectedValue(new Error("The caller does not have permission"));
+    provisionShopSpreadsheet.mockRejectedValue(new Error("No connected Google account for this user"));
 
-    await expect(
-      regenerateSpreadsheet(formData({ shop_id: "1", owner_email: "owner@example.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/1\/settings\?error=.*Could%20not%20regenerate%20the%20spreadsheet/);
+    await expect(regenerateSpreadsheet(formData({ shop_id: "1" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/1\/settings\?error=.*Connect%20your%20Google%20account/
+    );
   });
 
   it("redirects with an error when pointing the shop at the new sheet fails", async () => {
     const { client } = createMockSupabase({
+      user: { id: "user-1" },
       responses: {
         shops: [
           { data: { name: "Acme", platform: "Shopify" }, error: null },
@@ -241,9 +244,9 @@ describe("regenerateSpreadsheet", () => {
     holder.client = client;
     provisionShopSpreadsheet.mockResolvedValue({ id: "sheet-999", name: "Acme" });
 
-    await expect(
-      regenerateSpreadsheet(formData({ shop_id: "1", owner_email: "owner@example.com" }))
-    ).rejects.toThrow(/REDIRECT:\/shops\/1\/settings\?error=.*Could%20not%20regenerate%20the%20spreadsheet/);
+    await expect(regenerateSpreadsheet(formData({ shop_id: "1" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/1\/settings\?error=.*Connect%20your%20Google%20account/
+    );
   });
 });
 

@@ -3,9 +3,19 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireEnv } from "@/lib/env";
 
 // "/shops" covers /shops, /shops/[id], /shops/new, and /shops/connect; "/orders"
-// covers /orders/[id] — all by simple prefix, since none of this app's routes
-// nest deeper.
-const PROTECTED_PREFIXES = ["/dashboard", "/analytics", "/products", "/shops", "/orders", "/admin"];
+// covers /orders/[id]; "/workflows" is the shop-picker entry point that
+// redirects into /shops/[id]/workflows (already covered by "/shops" below,
+// listed separately since it's its own top-level route) — all by simple
+// prefix, since none of this app's routes nest deeper.
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/analytics",
+  "/products",
+  "/shops",
+  "/orders",
+  "/admin",
+  "/workflows",
+];
 
 // Runs on every matched request (see proxy.ts — Next's newer name for what
 // used to be called "middleware"). This is the actual

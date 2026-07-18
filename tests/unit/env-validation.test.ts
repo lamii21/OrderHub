@@ -24,8 +24,10 @@ afterEach(() => {
 describe("checkEnvironment", () => {
   it("is ok with every core var set (optional vars may still be missing)", () => {
     Object.assign(process.env, ALL_CORE);
-    delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    delete process.env.GOOGLE_OAUTH_REDIRECT_URI;
+    delete process.env.GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY;
     delete process.env.GOOGLE_SHEETS_TEMPLATE_ID;
 
     const result = checkEnvironment();
@@ -33,7 +35,7 @@ describe("checkEnvironment", () => {
     expect(result.ok).toBe(true);
     expect(result.missingCore).toEqual([]);
     expect(result.missingOptional).toEqual(
-      expect.arrayContaining(["GOOGLE_SERVICE_ACCOUNT_EMAIL", "GOOGLE_SHEETS_TEMPLATE_ID"])
+      expect.arrayContaining(["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_SHEETS_TEMPLATE_ID"])
     );
   });
 
@@ -68,8 +70,10 @@ describe("validateEnvironment", () => {
 
   it("logs a plain success line when everything (core + optional) is present", () => {
     Object.assign(process.env, ALL_CORE, {
-      GOOGLE_SERVICE_ACCOUNT_EMAIL: "svc@test.iam.gserviceaccount.com",
-      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: "key",
+      GOOGLE_OAUTH_CLIENT_ID: "client-id.apps.googleusercontent.com",
+      GOOGLE_OAUTH_CLIENT_SECRET: "secret",
+      GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3000/api/google/callback",
+      GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY: "aeWymEULXLMYZBA9saGFA2FiNuEo8qBBrEoLXpqXQTg=",
       GOOGLE_SHEETS_TEMPLATE_ID: "id",
     });
     const logSpy = vi.spyOn(console, "log");

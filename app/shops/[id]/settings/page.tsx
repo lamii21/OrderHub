@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { getGoogleConnectionStatus } from "@/lib/google-oauth";
 import { ErrorBanner } from "@/components/error-banner";
 import { DetailRow } from "@/components/detail-modal";
 import { StatCard } from "@/components/stat-card";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
 import { ShopHealthBadge } from "@/components/shop-health-badge";
+import { GoogleAccountCard } from "@/components/google-account-card";
 import { formatRelativeTime } from "@/lib/utils";
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
 import { CURRENCIES, getTimezones } from "@/lib/shop-settings";
@@ -26,6 +28,9 @@ type SearchParams = {
   regenerated?: string;
   secret_regenerated?: string;
   error?: string;
+  google_connected?: string;
+  google_disconnected?: string;
+  google_error?: string;
 };
 
 export default async function ShopSettingsPage({
@@ -41,7 +46,10 @@ export default async function ShopSettingsPage({
   // Same RPC every other shop page already uses — reused rather than
   // writing a settings-specific query for data that's already there.
   const supabase = await createSupabaseServerClient();
-  const [{ data: shops, error }, { data: secretRow, error: secretError }] = await Promise.all([
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const [{ data: shops, error }, { data: secretRow, error: secretError }, googleStatus] = await Promise.all([
     supabase.rpc("get_shops_with_stats"),
     // webhook_secret is deliberately NOT part of get_shops_with_stats()'s
     // output — that RPC backs several pages, and a secret has no business
@@ -50,6 +58,7 @@ export default async function ShopSettingsPage({
     // just this column. RLS's "Users can view their own shops" policy is
     // what actually stops this from returning another user's secret.
     supabase.from("shops").select("webhook_secret").eq("id", id).single(),
+    user ? getGoogleConnectionStatus(user.id) : Promise.resolve({ connected: false, email: null }),
   ]);
 
   if (error) {
@@ -101,9 +110,19 @@ export default async function ShopSettingsPage({
           no longer works.
         </p>
       )}
-      {sp.error && (
+      {sp.google_connected && (
+        <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Google account connected.
+        </p>
+      )}
+      {sp.google_disconnected && (
+        <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Google account disconnected.
+        </p>
+      )}
+      {(sp.error || sp.google_error) && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {decodeURIComponent(sp.error ?? sp.google_error ?? "")}
         </p>
       )}
 
@@ -237,19 +256,43 @@ export default async function ShopSettingsPage({
             />
             Enable automatic synchronization
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="email_notifications_enabled"
-              defaultChecked={shop.email_notifications_enabled}
-            />
-            Email notifications
-            <span className="text-xs text-gray-400">(coming soon — no emails are sent yet)</span>
-          </label>
+          <div>
+            {/* A disabled checkbox is never included in submitted form data
+                — this hidden input preserves whatever value is already
+                stored so saving the rest of this form can't silently flip
+                it to false. updateNotificationSettings itself (actions.ts)
+                is unchanged: it still just reads
+                formData.get("email_notifications_enabled") === "on". */}
+            {shop.email_notifications_enabled && (
+              <input type="hidden" name="email_notifications_enabled" value="on" />
+            )}
+            <label className="flex cursor-not-allowed items-center gap-2 text-sm text-gray-400">
+              <input
+                type="checkbox"
+                checked={shop.email_notifications_enabled}
+                disabled
+                readOnly
+                className="cursor-not-allowed"
+              />
+              Email notifications
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                Coming Soon
+              </span>
+            </label>
+            <p className="ml-6 mt-1 text-xs text-gray-400">
+              Available in a future version — no emails are sent yet.
+            </p>
+          </div>
 
           <SubmitButton pendingLabel="Saving…">Save Notification Settings</SubmitButton>
         </form>
       </div>
+
+      <GoogleAccountCard
+        connected={googleStatus.connected}
+        email={googleStatus.email}
+        redirectTo={`/shops/${shop.id}/settings`}
+      />
 
       <div className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-lg font-semibold">Google Sheets</h2>
@@ -269,27 +312,17 @@ export default async function ShopSettingsPage({
             </a>
           )}
 
-          <ConfirmActionForm
-            shopId={shop.id}
-            action={regenerateSpreadsheet}
-            buttonLabel="Regenerate Spreadsheet"
-            pendingLabel="Regenerating…"
-            confirmMessage="Regenerate the spreadsheet? This creates a brand new Google Sheet and links it to this shop — the old one stays in your Drive but is no longer linked here. This cannot be undone."
-          >
-            <div className="mb-2">
-              <label htmlFor="owner_email" className="mb-1 block text-xs font-medium text-gray-700">
-                Share new spreadsheet with (Google account email)
-              </label>
-              <input
-                id="owner_email"
-                name="owner_email"
-                type="email"
-                required
-                placeholder="you@gmail.com"
-                className="w-64 rounded-md border px-3 py-2 text-sm"
-              />
-            </div>
-          </ConfirmActionForm>
+          {googleStatus.connected ? (
+            <ConfirmActionForm
+              shopId={shop.id}
+              action={regenerateSpreadsheet}
+              buttonLabel="Regenerate Spreadsheet"
+              pendingLabel="Regenerating…"
+              confirmMessage="Regenerate the spreadsheet? This creates a brand new Google Sheet and links it to this shop — the old one stays in your Drive but is no longer linked here. This cannot be undone."
+            />
+          ) : (
+            <p className="text-sm text-gray-400">Connect your Google account above to regenerate.</p>
+          )}
         </div>
       </div>
 

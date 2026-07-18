@@ -6,6 +6,7 @@ import { StatCard } from "@/components/stat-card";
 import { DetailRow } from "@/components/detail-modal";
 import { SubmitButton } from "@/components/submit-button";
 import { ActionCard } from "@/components/action-card";
+import { SyncActionsPanel } from "@/components/sync-actions-panel";
 import {
   Table,
   TableBody,
@@ -15,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDuration, formatRelativeTime } from "@/lib/utils";
-import { syncProducts, syncOrders, testConnection } from "@/app/shops/connect/actions";
+import { testConnection } from "@/app/shops/connect/actions";
 import { updateShopName, updateSyncFrequency, disconnectStore } from "../actions";
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
 import { ShopHealthBadge } from "@/components/shop-health-badge";
@@ -305,35 +306,15 @@ export default async function ShopDetailPage({
             </div>
           </div>
 
-          <ActionCard
-            title="Sync Products"
-            action={syncProducts}
+          <SyncActionsPanel
             shopId={shop.id}
-            buttonLabel="Sync Products Now"
-            pendingLabel="Syncing products…"
+            platform={shop.platform}
+            sheetId={shop.sheet_id}
+            productsSynced={sp.products_synced}
+            ordersSynced={sp.orders_synced}
             redirectTo={`/shops/${shop.id}`}
-          >
-            {sp.products_synced !== undefined && (
-              <p className="mb-2 text-sm text-gray-600">
-                Synced {sp.products_synced} product(s) from {shop.platform}.
-              </p>
-            )}
-          </ActionCard>
-
-          <ActionCard
-            title="Sync Orders"
-            action={syncOrders}
-            shopId={shop.id}
-            buttonLabel="Sync Orders Now"
-            pendingLabel="Syncing orders…"
-            redirectTo={`/shops/${shop.id}`}
-          >
-            {sp.orders_synced !== undefined && (
-              <p className="mb-2 text-sm text-gray-600">
-                Sent {sp.orders_synced} new order line(s) to the Google Sheet.
-              </p>
-            )}
-          </ActionCard>
+            continueHref={`/shops/${shop.id}`}
+          />
         </>
       )}
 

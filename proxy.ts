@@ -2,12 +2,19 @@ import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase-middleware";
 import { buildCsp } from "@/lib/csp";
 
-// "/shops" covers /shops, /shops/[id], /shops/new, and /shops/connect; "/orders"
-// covers /orders/[id] — same list lib/supabase-middleware.ts's own
-// PROTECTED_PREFIXES uses, kept here too since the matcher below now also
-// runs on public routes (/, /login, /shops/connect's landing state) that
-// don't need a session refresh at all.
-const SESSION_PREFIXES = ["/dashboard", "/analytics", "/products", "/shops", "/orders", "/admin"];
+// Same list as lib/supabase-middleware.ts's own PROTECTED_PREFIXES, kept
+// here too since the matcher below now also runs on public routes (/,
+// /login, /shops/connect's landing state) that don't need a session refresh
+// at all.
+const SESSION_PREFIXES = [
+  "/dashboard",
+  "/analytics",
+  "/products",
+  "/shops",
+  "/orders",
+  "/admin",
+  "/workflows",
+];
 
 // Every HTML-rendering route gets a fresh nonce and a CSP (see lib/csp.ts
 // for why it's Report-Only, not enforced, and why script-src is

@@ -36,7 +36,7 @@ describe("updateSession", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it.each(["/orders/1", "/shops", "/shops/1", "/products", "/analytics", "/admin"])(
+  it.each(["/orders/1", "/shops", "/shops/1", "/products", "/analytics", "/admin", "/workflows"])(
     "treats %s as protected",
     async (path) => {
       getUser.mockResolvedValue({ data: { user: null } });

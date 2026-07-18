@@ -1,28 +1,16 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { provisionShopSpreadsheet } from "@/lib/google-sheets";
+import { provisionShopSpreadsheetOrSkip } from "@/lib/google-sheets";
 import { createOrUpdateShop } from "@/lib/shop";
-import { isValidEmail } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 export async function createShop(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const platform = String(formData.get("platform") ?? "").trim();
-  const ownerEmail = String(formData.get("owner_email") ?? "").trim();
 
-  if (!name || !platform || !ownerEmail) {
-    redirect(
-      `/shops/new?error=${encodeURIComponent(
-        "Shop name, platform, and owner email are required."
-      )}`
-    );
-  }
-
-  if (!isValidEmail(ownerEmail)) {
-    redirect(
-      `/shops/new?error=${encodeURIComponent("Please enter a valid Google account email.")}`
-    );
+  if (!name || !platform) {
+    redirect(`/shops/new?error=${encodeURIComponent("Shop name and platform are required.")}`);
   }
 
   const supabase = await createSupabaseServerClient();
@@ -34,10 +22,13 @@ export async function createShop(formData: FormData) {
     redirect("/login");
   }
 
-  let sheetId: string;
+  let sheetId: string | null;
 
   try {
-    const sheet = await provisionShopSpreadsheet(name, platform, ownerEmail);
+    // Never blocks shop creation: if this user hasn't connected a Google
+    // account yet (or the API call fails), the shop is still created with
+    // no spreadsheet — see provisionShopSpreadsheetOrSkip's own comment.
+    const sheet = await provisionShopSpreadsheetOrSkip(user.id, name, platform);
     await createOrUpdateShop({
       name,
       platform,
@@ -49,11 +40,14 @@ export async function createShop(formData: FormData) {
   } catch (err) {
     console.error("Failed to create shop:", err);
     redirect(
-      `/shops/new?error=${encodeURIComponent(
-        "Could not create the shop. Please check the Google integration is configured correctly and try again."
-      )}`
+      `/shops/new?error=${encodeURIComponent("Could not create the shop. Please try again.")}`
     );
   }
 
-  redirect(`/shops/new?sheet_id=${encodeURIComponent(sheetId)}`);
+  // sheetId is only null when Google provisioning was skipped (no connected
+  // Google account, or the API call failed — see
+  // provisionShopSpreadsheetOrSkip) — the success page's own sheet_id check
+  // already treats a missing param as "show the form again", which is the
+  // right fallback here since there's no spreadsheet to show.
+  redirect(sheetId ? `/shops/new?sheet_id=${encodeURIComponent(sheetId)}` : "/shops/new");
 }

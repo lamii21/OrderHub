@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { isValidSyncFrequency } from "@/lib/sync-schedule";
 import { parsePositiveInt } from "@/lib/validation";
 import { logger } from "@/lib/logger";
+import { disconnectGoogleAccount as removeGoogleAccount } from "@/lib/google-oauth";
 
 // Hard delete. orders/products still have to be deleted explicitly, in this
 // order, before shops — that part hasn't changed. What *has* changed:
@@ -131,4 +132,34 @@ export async function updateSyncFrequency(formData: FormData) {
   }
 
   redirect(`/shops/${shopId}`);
+}
+
+// Not shop-scoped (a Google connection belongs to the app user, not any one
+// shop) but lives alongside the other shop-page actions for the same reason
+// deleteShop/disconnectStore do: it's triggered from components rendered on
+// shop pages (components/google-account-card.tsx), via a plain redirect_to
+// hidden field rather than a shop_id one. Existing shops keep whatever
+// sheet_id they already have — disconnecting only stops *future*
+// provisioning/regeneration from working until reconnected.
+export async function disconnectGoogleAccount(formData: FormData) {
+  const redirectTo = String(formData.get("redirect_to") ?? "/shops");
+
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  try {
+    await removeGoogleAccount(user.id);
+  } catch (err) {
+    console.error("disconnectGoogleAccount failed:", err);
+    redirect(`${redirectTo}?error=${encodeURIComponent("Could not disconnect your Google account.")}`);
+  }
+
+  logger.audit("google_account.disconnected", { userId: user.id });
+  redirect(`${redirectTo}?google_disconnected=1`);
 }

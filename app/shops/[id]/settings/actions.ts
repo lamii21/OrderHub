@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { provisionShopSpreadsheet } from "@/lib/google-sheets";
-import { isValidEmail } from "@/lib/validation";
 import { isValidSyncFrequency } from "@/lib/sync-schedule";
 import { logger } from "@/lib/logger";
 
@@ -87,17 +86,15 @@ export async function updateNotificationSettings(formData: FormData) {
 // pointer moves.
 export async function regenerateSpreadsheet(formData: FormData) {
   const shopId = String(formData.get("shop_id") ?? "");
-  const ownerEmail = String(formData.get("owner_email") ?? "").trim();
-
-  if (!isValidEmail(ownerEmail)) {
-    redirect(
-      `/shops/${shopId}/settings?error=${encodeURIComponent(
-        "Please enter a valid Google account email to share the new spreadsheet with."
-      )}`
-    );
-  }
 
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
 
   // RLS's "Users can view their own shops" policy already means this comes
   // back empty for a shop_id that isn't the caller's own.
@@ -112,7 +109,7 @@ export async function regenerateSpreadsheet(formData: FormData) {
   }
 
   try {
-    const sheet = await provisionShopSpreadsheet(shop.name, shop.platform, ownerEmail);
+    const sheet = await provisionShopSpreadsheet(user.id, shop.name, shop.platform);
     const { error } = await supabase
       .from("shops")
       .update({
@@ -129,7 +126,7 @@ export async function regenerateSpreadsheet(formData: FormData) {
     console.error("regenerateSpreadsheet failed:", err);
     redirect(
       `/shops/${shopId}/settings?error=${encodeURIComponent(
-        "Could not regenerate the spreadsheet. Check the Google integration and try again."
+        "Could not regenerate the spreadsheet. Connect your Google account first, then try again."
       )}`
     );
   }

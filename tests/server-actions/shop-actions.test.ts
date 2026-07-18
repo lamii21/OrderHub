@@ -12,7 +12,16 @@ vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: vi.fn(async () => holder.client),
 }));
 
-import { deleteShop, updateShopName, disconnectStore, updateSyncFrequency } from "@/app/shops/actions";
+const { removeGoogleAccount } = vi.hoisted(() => ({ removeGoogleAccount: vi.fn() }));
+vi.mock("@/lib/google-oauth", () => ({ disconnectGoogleAccount: removeGoogleAccount }));
+
+import {
+  deleteShop,
+  updateShopName,
+  disconnectStore,
+  updateSyncFrequency,
+  disconnectGoogleAccount,
+} from "@/app/shops/actions";
 
 function formData(fields: Record<string, string>) {
   const fd = new FormData();
@@ -21,6 +30,7 @@ function formData(fields: Record<string, string>) {
 }
 
 beforeEach(() => {
+  removeGoogleAccount.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
@@ -223,5 +233,48 @@ describe("updateSyncFrequency", () => {
     await expect(
       updateSyncFrequency(formData({ shop_id: "5", sync_frequency: "daily" }))
     ).rejects.toThrow(/REDIRECT:\/shops\/5\?error=.*Could%20not%20update%20sync%20frequency/);
+  });
+});
+
+describe("disconnectGoogleAccount", () => {
+  it("redirects to /login when there is no authenticated user, without disconnecting anything", async () => {
+    const { client } = createMockSupabase({ user: null });
+    holder.client = client;
+
+    await expect(disconnectGoogleAccount(formData({ redirect_to: "/shops/5/settings" }))).rejects.toThrow(
+      "REDIRECT:/login"
+    );
+    expect(removeGoogleAccount).not.toHaveBeenCalled();
+  });
+
+  it("disconnects the logged-in user's Google account and redirects back with google_disconnected=1", async () => {
+    const { client } = createMockSupabase({ user: { id: "user-1" } });
+    holder.client = client;
+    removeGoogleAccount.mockResolvedValue(undefined);
+
+    await expect(disconnectGoogleAccount(formData({ redirect_to: "/shops/5/settings" }))).rejects.toThrow(
+      "REDIRECT:/shops/5/settings?google_disconnected=1"
+    );
+    expect(removeGoogleAccount).toHaveBeenCalledWith("user-1");
+  });
+
+  it("defaults to /shops when no redirect_to is given", async () => {
+    const { client } = createMockSupabase({ user: { id: "user-1" } });
+    holder.client = client;
+    removeGoogleAccount.mockResolvedValue(undefined);
+
+    await expect(disconnectGoogleAccount(formData({}))).rejects.toThrow(
+      "REDIRECT:/shops?google_disconnected=1"
+    );
+  });
+
+  it("redirects with an error when disconnecting fails", async () => {
+    const { client } = createMockSupabase({ user: { id: "user-1" } });
+    holder.client = client;
+    removeGoogleAccount.mockRejectedValue(new Error("network error"));
+
+    await expect(disconnectGoogleAccount(formData({ redirect_to: "/shops/5/settings" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/5\/settings\?error=.*Could%20not%20disconnect/
+    );
   });
 });

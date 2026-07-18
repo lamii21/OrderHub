@@ -159,7 +159,7 @@ export async function syncShopOrders(shop: ShopForSync): Promise<SyncOutcome> {
     );
 
     if (rows.length > 0 && shop.sheet_id) {
-      await appendOrderRows(shop.sheet_id, rows);
+      await appendOrderRows(shop.id, shop.sheet_id, rows);
     }
 
     // Cursor = the newest createdAt the connector actually returned, not

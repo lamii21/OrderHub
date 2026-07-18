@@ -14,8 +14,13 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 process.env.SUPABASE_ANON_KEY ??= "test-anon-key";
 process.env.API_SECRET ??= "test-api-secret";
 process.env.CRON_SECRET ??= "test-cron-secret";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ??= "test@test.iam.gserviceaccount.com";
-process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ??= "test-private-key";
+process.env.GOOGLE_OAUTH_CLIENT_ID ??= "test-client-id.apps.googleusercontent.com";
+process.env.GOOGLE_OAUTH_CLIENT_SECRET ??= "test-client-secret";
+process.env.GOOGLE_OAUTH_REDIRECT_URI ??= "http://localhost:3000/api/google/callback";
+// A real 32-byte key, base64-encoded — lib/crypto.ts's requireEncryptionKey()
+// enforces exact length, so this must decode to 32 bytes like a real one
+// would, even though it's never used against real Google traffic.
+process.env.GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY ??= "aeWymEULXLMYZBA9saGFA2FiNuEo8qBBrEoLXpqXQTg=";
 process.env.GOOGLE_SHEETS_TEMPLATE_ID ??= "test-template-id";
 
 // lib/net-guard.ts's assertPublicHttpUrl() does a real DNS lookup for any

@@ -33,6 +33,7 @@ const USER_FACING_TABLES = [
   "module_credentials",
   "order_notes",
   "workflow_waits",
+  "google_accounts",
 ] as const;
 
 function extractTableNames(sql: string): string[] {

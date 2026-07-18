@@ -8,6 +8,7 @@ import type { Order } from "@/types/order";
 
 const order = {
   id: 1,
+  shop_id: 7,
   created_at: "2026-01-01T00:00:00Z",
   customer_name: "Amina",
   customer_phone: "0600000000",
@@ -49,7 +50,7 @@ describe("googleSheetsModule.run", () => {
       {}
     );
 
-    expect(appendRowToSheet).toHaveBeenCalledWith("sheet-abc", "Tracking", [
+    expect(appendRowToSheet).toHaveBeenCalledWith(7, "sheet-abc", "Tracking", [
       "2026-01-01T00:00:00Z",
       "Amina",
       "0600000000",
@@ -76,5 +77,16 @@ describe("googleSheetsModule.run", () => {
     );
 
     expect(result).toEqual({ success: false, message: "Could not write to the Google Sheet." });
+  });
+
+  it("reports a structured failure without calling appendRowToSheet when the order has no shop_id", async () => {
+    const result = await googleSheetsModule.run(
+      { ...order, shop_id: null },
+      { spreadsheetId: "sheet-abc", sheetName: "Tracking" },
+      {}
+    );
+
+    expect(appendRowToSheet).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: false, message: "Order has no associated shop." });
   });
 });
