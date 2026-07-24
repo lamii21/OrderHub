@@ -100,4 +100,157 @@ describe("createOrUpdateShop", () => {
       createOrUpdateShop({ name: "Acme", platform: "Shopify", sheetId: "s1", sheetName: null })
     ).rejects.toThrow("duplicate key");
   });
+
+  it("updates the existing row by (user_id, store_url) instead of inserting a duplicate when sheetId is null (connectShop, no Google account connected yet)", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: { id: 8 }, error: null }, // SELECT finds the existing row
+          { data: { id: 8 }, error: null }, // UPDATE returns it
+        ],
+      },
+    });
+    holder.client = client;
+
+    const result = await createOrUpdateShop({
+      name: "AYLA",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+      storeUrl: "https://ayla.myshopify.com",
+      apiKey: "new-key",
+    });
+
+    expect(result).toEqual({ id: 8 });
+    // First call: the lookup SELECT.
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("platform", "Shopify");
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("store_url", "https://ayla.myshopify.com");
+    // Second call: the UPDATE, never an insert/upsert.
+    expect(builders.shops[1].update).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "AYLA", platform: "Shopify", api_key: "new-key" })
+    );
+    expect(builders.shops[1].upsert).not.toHaveBeenCalled();
+  });
+
+  it("falls back to matching by (user_id, name, platform) when there's no store_url (createShop, Sheets-only)", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: { id: 3 }, error: null },
+          { data: { id: 3 }, error: null },
+        ],
+      },
+    });
+    holder.client = client;
+
+    await createOrUpdateShop({
+      name: "AYLA",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+    });
+
+    expect(builders.shops[0].eq).toHaveBeenCalledWith("name", "AYLA");
+    expect(builders.shops[0].eq).not.toHaveBeenCalledWith("store_url", expect.anything());
+  });
+
+  it("inserts a new shop when sheetId is null, userId is present, but no existing shop matches", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: null, error: null }, // SELECT: no match
+          { data: { id: 99 }, error: null }, // falls through to the original upsert
+        ],
+      },
+    });
+    holder.client = client;
+
+    const result = await createOrUpdateShop({
+      name: "New Shop",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+    });
+
+    expect(result).toEqual({ id: 99 });
+    expect(builders.shops[1].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "New Shop", sheet_id: null }),
+      { onConflict: "sheet_id" }
+    );
+  });
+
+  it("limits the lookup to 1 row, so an already-duplicated shop converges on one row instead of silently falling through to another insert", async () => {
+    // Regression guard for @supabase/postgrest-js's maybeSingle() behavior
+    // when >1 row matches: it returns { data: null, error: PGRST116 }
+    // rather than throwing, which — without .limit(1) — this call site
+    // would silently misread as "no existing shop found".
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: { id: 8 }, error: null },
+          { data: { id: 8 }, error: null },
+        ],
+      },
+    });
+    holder.client = client;
+
+    await createOrUpdateShop({
+      name: "AYLA",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+      storeUrl: "https://ayla.myshopify.com",
+    });
+
+    expect(builders.shops[0].limit).toHaveBeenCalledWith(1);
+  });
+
+  it("orders the lookup by id ascending before limiting to 1, so an already-duplicated shop always resolves to the oldest row", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        shops: [
+          { data: { id: 8 }, error: null },
+          { data: { id: 8 }, error: null },
+        ],
+      },
+    });
+    holder.client = client;
+
+    await createOrUpdateShop({
+      name: "AYLA",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+      userId: "user-1",
+      storeUrl: "https://ayla.myshopify.com",
+    });
+
+    expect(builders.shops[0].order).toHaveBeenCalledWith("id", { ascending: true });
+  });
+
+  it("does not attempt the lookup when userId is absent (webhook path, unchanged behavior)", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { shops: { data: { id: 55 }, error: null } },
+    });
+    holder.client = client;
+
+    await createOrUpdateShop({
+      name: "Webhook Shop",
+      platform: "Shopify",
+      sheetId: null,
+      sheetName: null,
+    });
+
+    // Exactly one .from("shops") call — straight to the original upsert.
+    expect(builders.shops).toHaveLength(1);
+    expect(builders.shops[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Webhook Shop", sheet_id: null }),
+      { onConflict: "sheet_id" }
+    );
+  });
 });
