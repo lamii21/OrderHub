@@ -160,6 +160,10 @@ RLS (not encrypted at rest — see Security Notes below for that trade-off).
    - `Extensions → Apps Script`, paste `apps-script/sync-orders.gs`, fill in `API_URL` (your
      deployed `/api/orders` URL) and `API_SECRET` (must match the Vercel env var) once — this is
      shared by every shop copied from this template.
+   - From the spreadsheet's own **OrderHub** menu, run **Enable Automatic Sync** once per shop —
+     installs a 5-minute time-based trigger so new rows are sent on their own, with no one having
+     to open the sheet and click **Send Orders to OrderHub** by hand. Safe to run more than once;
+     it's a no-op if the trigger already exists.
    - Share it with whichever Google account you'll use to test provisioning, as at least
      **Viewer** — no service account to share with anymore, since each user provisions with their
      own connected account.
@@ -328,10 +332,10 @@ existing row instead of creating a duplicate.
 Two details worth knowing:
 - **`order_id` is optional.** Postgres treats every `NULL` in a unique index as distinct from every
   other `NULL`, so two orders with the same `shop_id` but no `order_id` are never considered
-  duplicates of each other. Today's Google Sheets → Apps Script flow doesn't send `order_id` at
-  all, so this protection is fully active only once a caller actually supplies a stable ID (e.g. a
-  future direct Shopify order sync into Supabase). It's already active for any payload that does
-  send one.
+  duplicates of each other. `apps-script/sync-orders.gs` now sends one — `sheet_id + "-" + row
+  number` — so a row resent after a network error updates the existing order instead of inserting
+  a duplicate. That ID is stable only as long as the row isn't manually moved or deleted; a
+  spreadsheet whose rows get reordered by hand loses this guarantee for the affected rows.
 - **`status` is excluded from the upsert unless the caller explicitly sends it.** If it were always
   included, a duplicate delivery would silently reset a merchant's manually-changed status (e.g.
   "Shipped") back to `pending` on every resend. Left out, the column's own default handles new

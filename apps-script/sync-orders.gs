@@ -23,7 +23,32 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("OrderHub")
     .addItem("Send Orders to OrderHub", "sendOrdersToOrderHub")
+    .addItem("Enable Automatic Sync", "installAutoSyncTrigger")
     .addToUi();
+}
+
+// One-time setup per spreadsheet: installs a time-based trigger so
+// sendOrdersToOrderHub() runs on its own on a schedule, instead of only
+// when someone opens this sheet and clicks the menu by hand. Idempotent —
+// running this again (e.g. the menu item clicked twice) does not create a
+// second trigger, checked by handler function name.
+function installAutoSyncTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "sendOrdersToOrderHub") {
+      SpreadsheetApp.getUi().alert("Automatic sync is already enabled.");
+      return;
+    }
+  }
+
+  ScriptApp.newTrigger("sendOrdersToOrderHub")
+    .timeBased()
+    .everyMinutes(5)
+    .create();
+
+  SpreadsheetApp.getUi().alert(
+    "Automatic sync enabled — new orders will be sent every 5 minutes. No further action needed."
+  );
 }
 
 function getShopConfig() {
@@ -52,6 +77,12 @@ function sendOrdersToOrderHub() {
       shop_name: config.shopName,
       sheet_id: sheetId,
       sheet_name: sheetName,
+      // Stable per-row identifier so OrderHub's own dedup (unique on
+      // shop_id + order_id) can actually catch a row sent twice — without
+      // this, order_id was always missing and every resend inserted a
+      // fresh duplicate order. Stable as long as this row isn't manually
+      // moved/deleted; that's a known, accepted limit, not a hidden one.
+      order_id: sheetId + "-" + rowNumber,
       customer_name: data[row][COL.CUSTOMER_NAME - 1],
       customer_phone: data[row][COL.CUSTOMER_PHONE - 1],
       customer_city: data[row][COL.CUSTOMER_CITY - 1],
