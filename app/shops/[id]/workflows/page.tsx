@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/table";
 import { getEventTypeLabel } from "@/lib/events/types";
 import { formatRelativeTime } from "@/lib/utils";
-import { deleteWorkflow } from "./actions";
+import { deleteWorkflow, createStarterWorkflow } from "./actions";
 import { activateWorkflow, deactivateWorkflow } from "./[workflowId]/actions";
 import type { ShopWithStats } from "@/types/shop";
 import type { WorkflowWithStats } from "@/types/workflow";
@@ -76,12 +76,22 @@ export default async function WorkflowListPage({
             ← Back to {shop.name}
           </Link>
         </div>
-        <Link
-          href={`/shops/${shop.id}/workflows/new`}
-          className="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          New Workflow
-        </Link>
+        <div className="flex items-center gap-3">
+          {workflows.length === 0 && (
+            <form action={createStarterWorkflow}>
+              <input type="hidden" name="shop_id" value={shop.id} />
+              <SubmitButton variant="secondary" pendingLabel="Creating…">
+                Create Order Confirmation Workflow
+              </SubmitButton>
+            </form>
+          )}
+          <Link
+            href={`/shops/${shop.id}/workflows/new`}
+            className="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            New Workflow
+          </Link>
+        </div>
       </div>
 
       {sp.deleted !== undefined && (
@@ -175,7 +185,15 @@ export default async function WorkflowListPage({
         </Table>
         {workflows.length === 0 && (
           <p className="p-6 text-center text-gray-500">
-            No workflows yet. Create one to automate what happens when an order comes in.
+            No workflows yet.{" "}
+            <span className="whitespace-nowrap">
+              &quot;Create Order Confirmation Workflow&quot;
+            </span>{" "}
+            above sets up a WhatsApp message on every new order in one click — make sure WhatsApp{" "}
+            <Link href={`/shops/${shop.id}/integrations`} className="text-blue-600 hover:underline">
+              credentials
+            </Link>{" "}
+            are configured first, or build a custom one instead.
           </p>
         )}
       </div>

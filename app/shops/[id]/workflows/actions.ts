@@ -55,6 +55,72 @@ export async function createWorkflow(formData: FormData) {
   redirect(`/shops/${shopId}/workflows/${data.id}`);
 }
 
+// One-click alternative to createWorkflow() + addWorkflowStep() +
+// activateWorkflow() done by hand — the Workflow Builder is real and
+// functional, but a first-time merchant staring at an empty workflow
+// list has no automation running until they go build one themselves.
+// This creates a single, already-active "Order Confirmation" workflow
+// (order.created → one WhatsApp step) so a merchant who has already
+// configured WhatsApp credentials (see app/shops/[id]/integrations) sees
+// automation fire on their very next order with zero manual setup.
+// Skips the module-existence check activateWorkflow() runs on arbitrary
+// Draft content — "whatsapp" is hardcoded here, not user input, so there
+// is nothing to validate.
+const STARTER_WHATSAPP_TEMPLATE =
+  "Hi {{customer_name}}, thanks for your order of {{product}} (x{{quantity}})! We'll be in touch soon.";
+
+export async function createStarterWorkflow(formData: FormData) {
+  const shopId = parsePositiveInt(formData.get("shop_id"));
+
+  if (shopId === null) {
+    redirect(`/shops?error=${encodeURIComponent("Invalid shop.")}`);
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: workflow, error: workflowError } = await supabase
+    .from("workflows")
+    .insert({
+      shop_id: shopId,
+      name: "Order Confirmation",
+      trigger_event: "order.created",
+      is_active: true,
+      activated_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (workflowError || !workflow) {
+    console.error("createStarterWorkflow failed to create the workflow:", workflowError);
+    redirect(
+      `/shops/${shopId}/workflows?error=${encodeURIComponent("Could not create the starter workflow.")}`
+    );
+  }
+
+  const { error: stepError } = await supabase.from("workflow_steps").insert({
+    workflow_id: workflow.id,
+    step_order: 1,
+    module_name: "whatsapp",
+    config: { template: STARTER_WHATSAPP_TEMPLATE },
+  });
+
+  if (stepError) {
+    console.error("createStarterWorkflow failed to add the step:", stepError);
+    // The workflow row already exists (is_active: true, but with 0 steps)
+    // — resolveWorkflows() already filters out any workflow with no steps
+    // (lib/workflows/manager.ts), so this half-created state can never
+    // fire, and the merchant lands on the editor to finish it by hand.
+    redirect(
+      `/shops/${shopId}/workflows/${workflow.id}?error=${encodeURIComponent(
+        "The workflow was created but its first step could not be added. Add one below."
+      )}`
+    );
+  }
+
+  logger.audit("workflow.starter_created", { shopId, workflowId: workflow.id });
+  redirect(`/shops/${shopId}/workflows/${workflow.id}?activated=1`);
+}
+
 // Always allowed, at any lifecycle state — workflow_steps cascade-deletes
 // automatically (on delete cascade, set from its first migration), so
 // there's no step cleanup to do here. Same "delete for their own shops"

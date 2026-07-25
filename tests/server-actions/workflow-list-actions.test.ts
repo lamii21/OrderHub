@@ -12,7 +12,7 @@ vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: vi.fn(async () => holder.client),
 }));
 
-import { createWorkflow, deleteWorkflow } from "@/app/shops/[id]/workflows/actions";
+import { createWorkflow, deleteWorkflow, createStarterWorkflow } from "@/app/shops/[id]/workflows/actions";
 
 function formData(fields: Record<string, string>) {
   const fd = new FormData();
@@ -78,6 +78,73 @@ describe("createWorkflow", () => {
     await expect(
       createWorkflow(formData({ shop_id: "1", name: "Welcome flow", trigger_event: "order.created" }))
     ).rejects.toThrow(/REDIRECT:\/shops\/1\/workflows\/new\?error=/);
+  });
+});
+
+describe("createStarterWorkflow", () => {
+  it("redirects to the shop list on an invalid shop_id, without touching the database", async () => {
+    const { client } = createMockSupabase();
+    holder.client = client;
+
+    await expect(createStarterWorkflow(formData({ shop_id: "abc" }))).rejects.toThrow(
+      /REDIRECT:\/shops\?error=/
+    );
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("creates an active workflow with one whatsapp step and redirects to the editor", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: {
+        workflows: { data: { id: 42 }, error: null },
+        workflow_steps: { data: null, error: null },
+      },
+    });
+    holder.client = client;
+
+    await expect(createStarterWorkflow(formData({ shop_id: "1" }))).rejects.toThrow(
+      "REDIRECT:/shops/1/workflows/42?activated=1"
+    );
+
+    const workflowPayload = builders.workflows[0].insert.mock.calls[0][0];
+    expect(workflowPayload).toEqual(
+      expect.objectContaining({
+        shop_id: 1,
+        name: "Order Confirmation",
+        trigger_event: "order.created",
+        is_active: true,
+      })
+    );
+
+    const stepPayload = builders.workflow_steps[0].insert.mock.calls[0][0];
+    expect(stepPayload).toEqual(
+      expect.objectContaining({ workflow_id: 42, step_order: 1, module_name: "whatsapp" })
+    );
+    expect(stepPayload.config).toHaveProperty("template");
+  });
+
+  it("redirects with an error when the workflow insert fails", async () => {
+    const { client } = createMockSupabase({
+      responses: { workflows: { data: null, error: { message: "insert failed" } } },
+    });
+    holder.client = client;
+
+    await expect(createStarterWorkflow(formData({ shop_id: "1" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/1\/workflows\?error=/
+    );
+  });
+
+  it("redirects to the (already-created) workflow's editor when the step insert fails", async () => {
+    const { client } = createMockSupabase({
+      responses: {
+        workflows: { data: { id: 42 }, error: null },
+        workflow_steps: { data: null, error: { message: "insert failed" } },
+      },
+    });
+    holder.client = client;
+
+    await expect(createStarterWorkflow(formData({ shop_id: "1" }))).rejects.toThrow(
+      /REDIRECT:\/shops\/1\/workflows\/42\?error=/
+    );
   });
 });
 
