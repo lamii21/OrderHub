@@ -2034,3 +2034,87 @@ as $$
   set stock_quantity = greatest(stock_quantity - p_quantity, 0)
   where id = p_product_id and stock_quantity is not null;
 $$;
+
+-- ==== Product variants ====
+-- Storage only, populated exclusively by the direct platform pull
+-- (lib/sync.ts's syncShopProducts, Flux 2) — the Google Sheets order
+-- pipeline carries no variant information at all (no SKU/variant column
+-- anywhere in apps-script/sync-orders.gs), so there is nothing here to
+-- link an incoming order to a specific variant. That would require
+-- changing what the Sheet/Apps Script collect, a separate, larger piece
+-- of work, deliberately out of scope here.
+--
+-- Populated by the Shopify connector only for now (lib/platforms/
+-- shopify.ts embeds every variant directly in its product list
+-- response, so capturing all of them instead of just variants[0] is a
+-- pure mapping change). WooCommerce exposes variations through a
+-- separate, paginated per-product endpoint — a real fetch-pattern change,
+-- not just a mapping one — and YouCan's connector is already documented
+-- as unverified, best-effort guesswork with no confirmed variant model
+-- at all (see lib/platforms/youcan.ts's own header comment). Extending
+-- either without a real API to verify against would mean inventing
+-- behavior, not implementing it. Both are follow-up work.
+create table if not exists product_variants (
+  id bigint generated always as identity primary key,
+  product_id bigint not null references products(id) on delete cascade,
+  platform_variant_id text not null,
+  title text,
+  sku text,
+  price numeric(10, 2),
+  stock_quantity integer,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists product_variants_product_platform_key
+  on product_variants (product_id, platform_variant_id);
+
+create index if not exists product_variants_product_id_idx on product_variants (product_id);
+
+alter table product_variants enable row level security;
+
+grant select, insert, update, delete on product_variants to authenticated;
+
+drop policy if exists "Users can view variants for their own products" on product_variants;
+create policy "Users can view variants for their own products"
+  on product_variants for select
+  to authenticated
+  using (
+    product_id in (
+      select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can insert variants for their own products" on product_variants;
+create policy "Users can insert variants for their own products"
+  on product_variants for insert
+  to authenticated
+  with check (
+    product_id in (
+      select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can update variants for their own products" on product_variants;
+create policy "Users can update variants for their own products"
+  on product_variants for update
+  to authenticated
+  using (
+    product_id in (
+      select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  )
+  with check (
+    product_id in (
+      select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can delete variants for their own products" on product_variants;
+create policy "Users can delete variants for their own products"
+  on product_variants for delete
+  to authenticated
+  using (
+    product_id in (
+      select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );

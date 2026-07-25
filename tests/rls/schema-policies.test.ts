@@ -35,6 +35,7 @@ const USER_FACING_TABLES = [
   "workflow_waits",
   "google_accounts",
   "customers",
+  "product_variants",
 ] as const;
 
 function extractTableNames(sql: string): string[] {
@@ -134,6 +135,16 @@ describe("RLS — ownership chains trace back to the owning shop's user_id", () 
       }
     }
   );
+
+  it("product_variants: every policy scopes via product_id -> products.shop_id -> shops.user_id", () => {
+    const tablePolicies = policiesFor("product_variants");
+    expect(tablePolicies.length).toBeGreaterThan(0);
+    for (const policy of tablePolicies) {
+      expect(policy.body.replace(/\s+/g, " ")).toContain(
+        "product_id in ( select id from products where shop_id in (select id from shops where user_id = (select auth.uid())) )"
+      );
+    }
+  });
 
   it.each(["order_history", "order_notes"])(
     "%s: every policy scopes via order_id -> orders.shop_id -> shops.user_id",

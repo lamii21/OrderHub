@@ -59,12 +59,48 @@ export async function syncShopProducts(shop: ShopForSync): Promise<SyncOutcome> 
     }));
 
     if (rows.length > 0) {
-      const { error } = await supabase
+      // platform_product_id selected back so variant rows below can be
+      // linked to the right internal product_id — upsert() alone doesn't
+      // return anything unless asked to.
+      const { data: upsertedProducts, error } = await supabase
         .from("products")
-        .upsert(rows, { onConflict: "shop_id,platform_product_id" });
+        .upsert(rows, { onConflict: "shop_id,platform_product_id" })
+        .select("id, platform_product_id");
 
       if (error) {
         throw error;
+      }
+
+      // Only products whose connector actually populated .variants (see
+      // NormalizedProduct's own comment — Shopify only, today) contribute
+      // any rows here; everything else is silently skipped, not written
+      // as an empty/placeholder variant.
+      const productIdByPlatformId = new Map(
+        (upsertedProducts ?? []).map((row) => [row.platform_product_id, row.id])
+      );
+
+      const variantRows = products.flatMap((product) => {
+        const productId = productIdByPlatformId.get(product.platformProductId);
+        if (!productId || !product.variants) return [];
+
+        return product.variants.map((variant) => ({
+          product_id: productId,
+          platform_variant_id: variant.platformVariantId,
+          title: variant.title,
+          sku: variant.sku,
+          price: variant.price,
+          stock_quantity: variant.stockQuantity,
+        }));
+      });
+
+      if (variantRows.length > 0) {
+        const { error: variantsError } = await supabase
+          .from("product_variants")
+          .upsert(variantRows, { onConflict: "product_id,platform_variant_id" });
+
+        if (variantsError) {
+          throw variantsError;
+        }
       }
     }
 

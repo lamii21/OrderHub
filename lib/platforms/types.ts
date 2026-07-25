@@ -14,6 +14,14 @@ export type PlatformCredentials = {
   apiSecret?: string;
 };
 
+export type NormalizedProductVariant = {
+  platformVariantId: string;
+  title: string | null;
+  sku: string | null;
+  price: number | null;
+  stockQuantity: number | null;
+};
+
 export type NormalizedProduct = {
   platformProductId: string;
   name: string;
@@ -21,6 +29,11 @@ export type NormalizedProduct = {
   description: string | null;
   price: number | null;
   stockQuantity: number | null;
+  // Optional, and absent (not an empty array) from any connector that
+  // hasn't been extended to report variant-level data — lib/sync.ts uses
+  // that distinction to know which products actually have variant rows to
+  // write. Only lib/platforms/shopify.ts populates this today.
+  variants?: NormalizedProductVariant[];
 };
 
 export type NormalizedOrderLine = {

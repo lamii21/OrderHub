@@ -69,7 +69,7 @@ describe("shopifyConnector.fetchProducts", () => {
               id: 111,
               title: "T-Shirt",
               body_html: "<p>Soft cotton</p>",
-              variants: [{ sku: "TS-1", price: "19.99", inventory_quantity: 12 }],
+              variants: [{ id: 555, title: "Default Title", sku: "TS-1", price: "19.99", inventory_quantity: 12 }],
             },
           ],
         }),
@@ -86,8 +86,58 @@ describe("shopifyConnector.fetchProducts", () => {
         description: "Soft cotton",
         price: 19.99,
         stockQuantity: 12,
+        variants: [
+          {
+            platformVariantId: "555",
+            title: "Default Title",
+            sku: "TS-1",
+            price: 19.99,
+            stockQuantity: 12,
+          },
+        ],
       },
     ]);
+  });
+
+  it("normalizes every variant, not just the first, for a product with multiple", async () => {
+    mockFetchSequence([
+      {
+        json: async () => ({
+          products: [
+            {
+              id: 111,
+              title: "T-Shirt",
+              body_html: null,
+              variants: [
+                { id: 1, title: "Small / Red", sku: "TS-S-RED", price: "19.99", inventory_quantity: 5 },
+                { id: 2, title: "Large / Blue", sku: "TS-L-BLUE", price: "21.99", inventory_quantity: 3 },
+              ],
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const [product] = await shopifyConnector.fetchProducts(credentials);
+
+    expect(product.variants).toEqual([
+      { platformVariantId: "1", title: "Small / Red", sku: "TS-S-RED", price: 19.99, stockQuantity: 5 },
+      { platformVariantId: "2", title: "Large / Blue", sku: "TS-L-BLUE", price: 21.99, stockQuantity: 3 },
+    ]);
+  });
+
+  it("omits variants entirely (not an empty array) for a product with none", async () => {
+    mockFetchSequence([
+      {
+        json: async () => ({
+          products: [{ id: 111, title: "T-Shirt", body_html: null, variants: [] }],
+        }),
+      },
+    ]);
+
+    const [product] = await shopifyConnector.fetchProducts(credentials);
+
+    expect(product.variants).toBeUndefined();
   });
 
   it("follows Link: rel=next pagination across multiple pages", async () => {

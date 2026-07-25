@@ -4,6 +4,7 @@ import type {
   PlatformConnector,
   PlatformCredentials,
   NormalizedProduct,
+  NormalizedProductVariant,
   NormalizedOrder,
 } from "./types";
 
@@ -52,7 +53,13 @@ type ShopifyProduct = {
   id: number;
   title: string;
   body_html: string | null;
-  variants: { sku: string | null; price: string; inventory_quantity: number | null }[];
+  variants: {
+    id: number;
+    title: string | null;
+    sku: string | null;
+    price: string;
+    inventory_quantity: number | null;
+  }[];
 };
 
 type ShopifyOrder = {
@@ -98,6 +105,20 @@ async function fetchProducts(credentials: PlatformCredentials): Promise<Normaliz
   // real job — nothing downstream ever sees a ShopifyProduct.
   return products.map((product) => {
     const variant = product.variants?.[0];
+    // Every variant, not just the first — Shopify embeds them directly in
+    // this same response, unlike WooCommerce (a separate endpoint) or
+    // YouCan (no confirmed variant model at all; see NormalizedProduct's
+    // own comment on why only this connector populates the field).
+    const variants: NormalizedProductVariant[] | undefined = product.variants?.length
+      ? product.variants.map((v) => ({
+          platformVariantId: String(v.id),
+          title: v.title,
+          sku: v.sku ?? null,
+          price: v.price ? Number(v.price) : null,
+          stockQuantity: v.inventory_quantity ?? null,
+        }))
+      : undefined;
+
     return {
       platformProductId: String(product.id),
       name: product.title,
@@ -105,6 +126,7 @@ async function fetchProducts(credentials: PlatformCredentials): Promise<Normaliz
       description: product.body_html ? product.body_html.replace(/<[^>]*>/g, "").trim() : null,
       price: variant?.price ? Number(variant.price) : null,
       stockQuantity: variant?.inventory_quantity ?? null,
+      variants,
     };
   });
 }

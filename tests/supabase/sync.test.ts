@@ -144,6 +144,62 @@ describe("syncShopProducts", () => {
     expect(call.status).toBe("failed");
     expect(call.message).not.toContain("unique constraint");
   });
+
+  it("upserts variant rows linked to the resolved internal product_id when the connector reports variants", async () => {
+    getConnector.mockReturnValue({
+      fetchProducts: vi.fn().mockResolvedValue([
+        {
+          platformProductId: "1",
+          name: "T-Shirt",
+          sku: null,
+          description: null,
+          price: 19.99,
+          stockQuantity: 12,
+          variants: [
+            { platformVariantId: "v1", title: "Small", sku: "TS-S", price: 19.99, stockQuantity: 5 },
+            { platformVariantId: "v2", title: "Large", sku: "TS-L", price: 21.99, stockQuantity: 7 },
+          ],
+        },
+      ]),
+    });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: [{ id: 42, platform_product_id: "1" }], error: null },
+        shops: { data: null, error: null },
+        product_variants: { data: null, error: null },
+      },
+    });
+    holder.client = client;
+
+    await syncShopProducts(baseShop);
+
+    expect(builders.product_variants[0].upsert).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ product_id: 42, platform_variant_id: "v1", sku: "TS-S" }),
+        expect.objectContaining({ product_id: 42, platform_variant_id: "v2", sku: "TS-L" }),
+      ],
+      { onConflict: "product_id,platform_variant_id" }
+    );
+  });
+
+  it("never calls product_variants when no product reports variants", async () => {
+    getConnector.mockReturnValue({
+      fetchProducts: vi.fn().mockResolvedValue([
+        { platformProductId: "1", name: "Mug", sku: null, description: null, price: 10, stockQuantity: 5 },
+      ]),
+    });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: [{ id: 42, platform_product_id: "1" }], error: null },
+        shops: { data: null, error: null },
+      },
+    });
+    holder.client = client;
+
+    await syncShopProducts(baseShop);
+
+    expect(builders.product_variants).toBeUndefined();
+  });
 });
 
 describe("syncShopOrders", () => {
