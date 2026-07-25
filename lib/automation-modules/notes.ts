@@ -18,12 +18,12 @@ export const notesModule: AutomationModule = {
     return null;
   },
 
-  async run(order, config) {
+  async run(order, config, context) {
     const { content } = config as NotesConfig;
 
     const { data, error } = await supabase
       .from("order_notes")
-      .insert({ order_id: order.id, content: renderTemplate(content, order) })
+      .insert({ order_id: order.id, content: renderTemplate(content, order, context) })
       .select("id")
       .single();
 

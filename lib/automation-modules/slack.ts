@@ -46,7 +46,7 @@ export const slackModule: AutomationModule = {
     return null;
   },
 
-  async run(order, config) {
+  async run(order, config, context) {
     const { webhookUrl, template } = config as SlackConfig;
 
     try {
@@ -55,7 +55,7 @@ export const slackModule: AutomationModule = {
       // cases at save time.
       await assertPublicHttpUrl(webhookUrl);
 
-      const text = renderTemplate(template ?? DEFAULT_TEMPLATE, order);
+      const text = renderTemplate(template ?? DEFAULT_TEMPLATE, order, context);
 
       const response = await fetchWithTimeout(webhookUrl, {
         method: "POST",

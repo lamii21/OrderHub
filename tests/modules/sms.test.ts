@@ -92,6 +92,25 @@ describe("smsModule.run", () => {
     expect(body.get("Body")).toBe("Hi Amina, order for T-Shirt confirmed");
   });
 
+  it("substitutes {{tracking_number}} from a preceding Delivery step's context", async () => {
+    getModuleCredentials.mockResolvedValue({
+      accountSid: "AC123",
+      authToken: "secret-token",
+      fromNumber: "+15550001111",
+    });
+    const fetchMock = mockFetchSequence([{ json: async () => ({ sid: "SM123" }) }]);
+
+    await smsModule.run(
+      baseOrder,
+      { template: "Tracking: {{tracking_number}}" },
+      { delivery: { trackingNumber: "TRACK123" } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = new URLSearchParams(init.body as string);
+    expect(body.get("Body")).toBe("Tracking: TRACK123");
+  });
+
   it("omits data entirely when the Twilio response has no message sid", async () => {
     getModuleCredentials.mockResolvedValue({
       accountSid: "AC123",

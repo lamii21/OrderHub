@@ -43,6 +43,24 @@ describe("notesModule.run", () => {
     expect(result).toEqual({ success: true, message: "Note added.", data: { noteId: 99 } });
   });
 
+  it("substitutes {{tracking_number}} from a preceding Delivery step's context", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { order_notes: { data: { id: 100 }, error: null } },
+    });
+    holder.client = client;
+
+    await notesModule.run(
+      order,
+      { content: "Shipped, tracking: {{tracking_number}}" },
+      { delivery: { trackingNumber: "TRACK123" } }
+    );
+
+    expect(builders.order_notes[0].insert).toHaveBeenCalledWith({
+      order_id: 1,
+      content: "Shipped, tracking: TRACK123",
+    });
+  });
+
   it("reports a structured failure when the insert fails", async () => {
     const { client } = createMockSupabase({
       responses: { order_notes: { data: null, error: { message: "insert failed" } } },

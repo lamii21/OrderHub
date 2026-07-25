@@ -84,6 +84,21 @@ describe("emailModule.run", () => {
     expect(body.text).toBe("Hi Amina");
   });
 
+  it("substitutes {{tracking_number}} from a preceding Delivery step's context", async () => {
+    getModuleCredentials.mockResolvedValue({ apiKey: "re_test", fromAddress: "shop@acme.com" });
+    const fetchMock = mockFetchSequence([{ json: async () => ({ id: "msg_1" }) }]);
+
+    await emailModule.run(
+      baseOrder,
+      { subject: "Your order shipped", body: "Tracking: {{tracking_number}}" },
+      { delivery: { trackingNumber: "TRACK123" } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.text).toBe("Tracking: TRACK123");
+  });
+
   it("reports a structured failure on a non-2xx response", async () => {
     getModuleCredentials.mockResolvedValue({ apiKey: "re_test", fromAddress: "shop@acme.com" });
     mockFetchSequence([{ ok: false, status: 422 }]);

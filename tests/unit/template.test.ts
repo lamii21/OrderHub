@@ -74,4 +74,24 @@ describe("renderTemplate", () => {
     const result = renderTemplate("{{product}} / {{product}}", fullOrder);
     expect(result).toBe("T-Shirt / T-Shirt");
   });
+
+  it("substitutes tracking_number/carrier_name/estimated_delivery from context.delivery when present", () => {
+    const result = renderTemplate(
+      "{{tracking_number}} via {{carrier_name}}, due {{estimated_delivery}}",
+      fullOrder,
+      { delivery: { trackingNumber: "TRACK123", carrierName: "DHL", estimatedDelivery: "2026-08-01" } }
+    );
+
+    expect(result).toBe("TRACK123 via DHL, due 2026-08-01");
+  });
+
+  it("falls back to empty strings for delivery fields when context is omitted entirely", () => {
+    const result = renderTemplate("[{{tracking_number}}][{{carrier_name}}]", fullOrder);
+    expect(result).toBe("[][]");
+  });
+
+  it("falls back to empty strings for delivery fields when context has no delivery key yet", () => {
+    const result = renderTemplate("[{{tracking_number}}]", fullOrder, { whatsapp: { messageId: "x" } });
+    expect(result).toBe("[]");
+  });
 });

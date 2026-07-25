@@ -29,7 +29,7 @@ export const whatsappModule: AutomationModule = {
     return null;
   },
 
-  async run(order, config) {
+  async run(order, config, context) {
     const { template } = config as WhatsAppConfig;
 
     if (!order.shop_id) {
@@ -45,7 +45,7 @@ export const whatsappModule: AutomationModule = {
       return { success: false, message: "WhatsApp is not configured for this shop." };
     }
 
-    const message = renderTemplate(template, order);
+    const message = renderTemplate(template, order, context);
 
     try {
       const response = await fetchWithTimeout(`${GRAPH_API_BASE}/${credentials.phoneNumberId}/messages`, {

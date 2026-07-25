@@ -32,7 +32,7 @@ export const smsModule: AutomationModule = {
     return null;
   },
 
-  async run(order, config) {
+  async run(order, config, context) {
     const { template } = config as SmsConfig;
 
     if (!order.shop_id) {
@@ -48,7 +48,7 @@ export const smsModule: AutomationModule = {
       return { success: false, message: "SMS is not configured for this shop." };
     }
 
-    const message = renderTemplate(template, order);
+    const message = renderTemplate(template, order, context);
 
     try {
       const body = new URLSearchParams({

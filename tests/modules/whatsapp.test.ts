@@ -119,6 +119,21 @@ describe("whatsappModule.run", () => {
     expect(result).toEqual({ success: false, message: "WhatsApp API request timed out." });
   });
 
+  it("substitutes {{tracking_number}} from a preceding Delivery step's context", async () => {
+    getModuleCredentials.mockResolvedValue({ accessToken: "token-1", phoneNumberId: "phone-1" });
+    const fetchMock = mockFetchSequence([{ json: async () => ({ messages: [{ id: "wamid.abc" }] }) }]);
+
+    await whatsappModule.run(
+      baseOrder,
+      { template: "Your order is on its way — tracking: {{tracking_number}} ({{carrier_name}})" },
+      { delivery: { trackingNumber: "TRACK123", carrierName: "DHL" } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.text.body).toBe("Your order is on its way — tracking: TRACK123 (DHL)");
+  });
+
   it("omits data entirely when the response has no message id", async () => {
     getModuleCredentials.mockResolvedValue({ accessToken: "token-1", phoneNumberId: "phone-1" });
     mockFetchSequence([{ json: async () => ({ messages: [] }) }]);

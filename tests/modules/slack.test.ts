@@ -88,6 +88,20 @@ describe("slackModule.run", () => {
     expect(body.text).toBe("Amina bought T-Shirt");
   });
 
+  it("substitutes {{tracking_number}} from a preceding Delivery step's context", async () => {
+    const fetchMock = mockFetchSequence([{ status: 200, text: async () => "ok" }]);
+
+    await slackModule.run(
+      order,
+      { webhookUrl: "https://hooks.slack.com/x", template: "Shipped: {{tracking_number}}" },
+      { delivery: { trackingNumber: "TRACK123" } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.text).toBe("Shipped: TRACK123");
+  });
+
   it("reports success: false on a non-2xx response, with the status/body captured in data", async () => {
     mockFetchSequence([{ ok: false, status: 500, text: async () => "server error" }]);
 

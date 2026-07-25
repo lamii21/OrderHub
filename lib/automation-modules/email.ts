@@ -31,16 +31,17 @@ export const emailModule: AutomationModule = {
     return null;
   },
 
-  async run(order, config) {
+  async run(order, config, context) {
     const { subject, body } = config as EmailConfig;
 
     if (!order.shop_id) {
       return { success: false, message: "Order has no associated shop." };
     }
 
-    // customer_email is nullable — most orders today arrive without one
-    // (the Google Sheets ingestion pipeline has never collected it), so a
-    // missing address is an expected, common failure, not a bug.
+    // customer_email is nullable — the Sheets ingestion pipeline collects
+    // it (see apps-script/sync-orders.gs's COL layout) but the merchant's
+    // own order source may still not have one on file, so a missing
+    // address stays an expected, handled case, not a bug.
     if (!order.customer_email) {
       return { success: false, message: "Order has no customer email address." };
     }
@@ -60,8 +61,8 @@ export const emailModule: AutomationModule = {
         body: JSON.stringify({
           from: credentials.fromAddress,
           to: order.customer_email,
-          subject: renderTemplate(subject, order),
-          text: renderTemplate(body, order),
+          subject: renderTemplate(subject, order, context),
+          text: renderTemplate(body, order, context),
         }),
       });
 
