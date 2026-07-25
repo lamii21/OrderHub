@@ -3,9 +3,10 @@ import { NextRequest } from "next/server";
 import { createMockSupabase } from "../mocks/supabase";
 import { __resetRateLimitState } from "@/lib/rate-limit";
 
-const { createOrUpdateShop, handleEvent } = vi.hoisted(() => ({
+const { createOrUpdateShop, handleEvent, createOrUpdateCustomer } = vi.hoisted(() => ({
   createOrUpdateShop: vi.fn(),
   handleEvent: vi.fn(),
+  createOrUpdateCustomer: vi.fn(),
 }));
 
 const holder = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -17,6 +18,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/lib/shop", () => ({ createOrUpdateShop }));
 vi.mock("@/lib/workflows/dispatch", () => ({ handleEvent }));
+vi.mock("@/lib/customer", () => ({ createOrUpdateCustomer }));
 
 import { POST } from "@/app/api/orders/route";
 
@@ -48,6 +50,7 @@ function makeRequest(
 beforeEach(() => {
   createOrUpdateShop.mockReset();
   handleEvent.mockReset();
+  createOrUpdateCustomer.mockReset();
   __resetRateLimitState();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -378,6 +381,67 @@ describe("POST /api/orders — order.created dispatch", () => {
 
     expect(builders.orders[0].upsert).toHaveBeenCalledWith(
       expect.objectContaining({ customer_email: null }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("resolves and includes customer_id when customer_phone is provided", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    createOrUpdateCustomer.mockResolvedValue({ id: 55 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest({ ...VALID_PAYLOAD, customer_phone: "0600000000" }));
+
+    expect(createOrUpdateCustomer).toHaveBeenCalledWith(
+      expect.objectContaining({ shopId: 1, phone: "0600000000" })
+    );
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ customer_id: 55 }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("does not attempt customer resolution when customer_phone is absent (customer_id stays null)", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest(VALID_PAYLOAD));
+
+    expect(createOrUpdateCustomer).not.toHaveBeenCalled();
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ customer_id: null }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("still saves the order with customer_id null when customer resolution fails (never blocks the order)", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    createOrUpdateCustomer.mockRejectedValue(new Error("db down"));
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    const response = await POST(makeRequest({ ...VALID_PAYLOAD, customer_phone: "0600000000" }));
+
+    expect(response.status).toBe(200);
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ customer_id: null }),
       { onConflict: "shop_id,order_id", ignoreDuplicates: true }
     );
   });

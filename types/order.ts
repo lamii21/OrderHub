@@ -11,6 +11,7 @@ export type Order = {
   customer_email: string | null;
   product: string | null;
   product_id: number | null;
+  customer_id: number | null;
   quantity: number | null;
   price: number | null;
   status: OrderStatus;

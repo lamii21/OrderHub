@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { matchesAnySecret, requireEnv } from "@/lib/env";
 import { validateOrderPayload } from "@/lib/validation";
 import { createOrUpdateShop } from "@/lib/shop";
+import { createOrUpdateCustomer } from "@/lib/customer";
 import { handleEvent } from "@/lib/workflows/dispatch";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
@@ -108,6 +109,30 @@ export async function POST(request: NextRequest) {
     .eq("name", body.product)
     .maybeSingle();
 
+  // Same "best effort, never blocks the order" posture as the product
+  // lookup above: only attempted when a phone was actually provided
+  // (customers.phone is not null — see supabase/schema.sql — so there is
+  // nothing to key this on otherwise), and a failure here is logged, not
+  // surfaced as a failed webhook.
+  let customerId: number | null = null;
+  const customerPhone = typeof body.customer_phone === "string" ? body.customer_phone.trim() : "";
+
+  if (customerPhone) {
+    try {
+      const customer = await createOrUpdateCustomer({
+        shopId: shop.id,
+        phone: customerPhone,
+        name: typeof body.customer_name === "string" ? body.customer_name : null,
+        city: typeof body.customer_city === "string" ? body.customer_city : null,
+        address: typeof body.customer_address === "string" ? body.customer_address : null,
+        email: typeof body.customer_email === "string" ? body.customer_email : null,
+      });
+      customerId = customer.id;
+    } catch (err) {
+      console.error("Webhook: failed to upsert customer:", err);
+    }
+  }
+
   // status is only included when the caller explicitly provided one. Left
   // out, it defaults to 'pending' on first insert but is never touched on a
   // later duplicate delivery — so a status a merchant has since changed by
@@ -120,6 +145,7 @@ export async function POST(request: NextRequest) {
     customer_city: body.customer_city ?? null,
     customer_address: body.customer_address ?? null,
     customer_email: body.customer_email ?? null,
+    customer_id: customerId,
     product: body.product,
     product_id: matchedProduct?.id ?? null,
     quantity: body.quantity,

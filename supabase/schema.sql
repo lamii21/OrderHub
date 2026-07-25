@@ -1917,3 +1917,96 @@ create policy "Users can delete their own google account"
   on google_accounts for delete
   to authenticated
   using (user_id = (select auth.uid()));
+
+-- ==== Customers ====
+-- One row per (shop_id, phone) — phone is the identity key because it's
+-- the one customer field every order ingestion path already collects
+-- (apps-script/sync-orders.gs's COL layout), unlike email (see the
+-- "customer_email" work — still frequently absent). `not null` from the
+-- start, unlike shops.sheet_id's history: there is no existing data where
+-- phone was ever optional, so the (shop_id, phone) unique constraint
+-- below is safe to rely on directly — no NULL-collision workaround
+-- needed the way lib/shop.ts's createOrUpdateShop() requires for
+-- sheet_id. lib/customer.ts's createOrUpdateCustomer() is the only writer.
+--
+-- Only a light trim() is applied to phone by the application, not full
+-- E.164 normalization — two representations of the same real number
+-- ("0600000000" vs "+212600000000") are treated as different customers
+-- today. A known, scoped-out limitation, not an oversight.
+create table if not exists customers (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  phone text not null,
+  name text,
+  email text,
+  city text,
+  address text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists customers_shop_phone_key
+  on customers (shop_id, phone);
+
+create index if not exists customers_shop_id_idx on customers (shop_id);
+
+-- Nullable and unenforced by a foreign key check at insert time by
+-- design: an order predating this feature, or one whose payload had no
+-- phone at all, simply has no linked customer — same "best effort,
+-- never blocks the order" posture as orders.product_id.
+alter table orders add column if not exists customer_id bigint references customers(id);
+
+create index if not exists orders_customer_id_idx on orders (customer_id);
+
+alter table customers enable row level security;
+
+grant select, insert, update, delete on customers to authenticated;
+
+drop policy if exists "Users can view customers for their own shops" on customers;
+create policy "Users can view customers for their own shops"
+  on customers for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can insert customers for their own shops" on customers;
+create policy "Users can insert customers for their own shops"
+  on customers for insert
+  to authenticated
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can update customers for their own shops" on customers;
+create policy "Users can update customers for their own shops"
+  on customers for update
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())))
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete customers for their own shops" on customers;
+create policy "Users can delete customers for their own shops"
+  on customers for delete
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- Per-customer order count/LTV/last order — the one aggregate a future
+-- customer detail view needs, same "language sql stable" shape as every
+-- other read-only aggregate function in this file (get_dashboard_stats,
+-- get_product_stats...). Not called anywhere in the application yet —
+-- same precedent as module_credentials' RLS predating the UI that first
+-- wrote to it: the schema is complete now regardless of what reads it
+-- first.
+create or replace function get_customer_stats(p_customer_id bigint)
+returns table (
+  order_count bigint,
+  ltv numeric,
+  last_order_at timestamptz
+)
+language sql
+stable
+as $$
+  select
+    count(*),
+    coalesce(sum(price * quantity), 0),
+    max(created_at)
+  from orders
+  where customer_id = p_customer_id;
+$$;

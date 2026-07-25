@@ -34,6 +34,7 @@ const USER_FACING_TABLES = [
   "order_notes",
   "workflow_waits",
   "google_accounts",
+  "customers",
 ] as const;
 
 function extractTableNames(sql: string): string[] {
@@ -108,7 +109,7 @@ describe("RLS — ownership chains trace back to the owning shop's user_id", () 
     }
   });
 
-  it.each(["orders", "products", "sync_history", "workflows", "module_credentials"])(
+  it.each(["orders", "products", "sync_history", "workflows", "module_credentials", "customers"])(
     "%s: every policy scopes via shop_id -> shops.user_id, not a bare/unscoped check",
     (table) => {
       const tablePolicies = policiesFor(table);
