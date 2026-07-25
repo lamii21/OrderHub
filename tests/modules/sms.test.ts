@@ -111,6 +111,25 @@ describe("smsModule.run", () => {
     expect(body.get("Body")).toBe("Tracking: TRACK123");
   });
 
+  it("substitutes {{payment_link}} from a preceding Payment Link step's context", async () => {
+    getModuleCredentials.mockResolvedValue({
+      accountSid: "AC123",
+      authToken: "secret-token",
+      fromNumber: "+15550001111",
+    });
+    const fetchMock = mockFetchSequence([{ json: async () => ({ sid: "SM123" }) }]);
+
+    await smsModule.run(
+      baseOrder,
+      { template: "Pay here: {{payment_link}}" },
+      { "payment-link": { paymentLinkUrl: "https://buy.stripe.com/test_123" } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = new URLSearchParams(init.body as string);
+    expect(body.get("Body")).toBe("Pay here: https://buy.stripe.com/test_123");
+  });
+
   it("omits data entirely when the Twilio response has no message sid", async () => {
     getModuleCredentials.mockResolvedValue({
       accountSid: "AC123",

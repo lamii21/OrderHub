@@ -68,6 +68,12 @@ export const CREDENTIAL_MODULES = {
       { name: "model", label: "Model", required: true, type: "text" },
     ],
   },
+  "payment-link": {
+    label: "Payment Link",
+    description:
+      "Stripe — creates a one-off payment link for the order's amount. Use a test-mode secret key (sk_test_...) until verified against a real account.",
+    fields: [{ name: "apiKey", label: "Stripe Secret Key", required: true, type: "password" }],
+  },
 } as const satisfies Record<string, { label: string; description: string; fields: readonly CredentialField[] }>;
 
 export type CredentialModuleName = keyof typeof CREDENTIAL_MODULES;

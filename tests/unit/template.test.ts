@@ -119,4 +119,18 @@ describe("renderTemplate", () => {
 
     expect(result).toBe("Invoice INV-000123 for 39.98");
   });
+
+  it("substitutes payment_link from context['payment-link'] when present", () => {
+    const result = renderTemplate(
+      "Pay here: {{payment_link}}",
+      fullOrder,
+      { "payment-link": { paymentLinkUrl: "https://buy.stripe.com/test_123" } }
+    );
+
+    expect(result).toBe("Pay here: https://buy.stripe.com/test_123");
+  });
+
+  it("falls back to an empty string for payment_link when context is omitted", () => {
+    expect(renderTemplate("[{{payment_link}}]", fullOrder)).toBe("[]");
+  });
 });

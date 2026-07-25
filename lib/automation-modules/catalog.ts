@@ -151,6 +151,13 @@ export const MODULE_CATALOG: Record<string, ModuleCatalogEntry> = {
     purpose: "Email the customer an invoice for their order",
     configHint: "footerNote (optional text)",
   },
+  "payment-link": {
+    name: "Payment Link",
+    icon: "💳",
+    category: "action",
+    purpose: "Create a Stripe payment link for this order's amount",
+    configHint: "description (optional text, shown on the Stripe Checkout page)",
+  },
 };
 
 const FALLBACK_ENTRY: ModuleCatalogEntry = {
