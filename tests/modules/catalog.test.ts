@@ -58,6 +58,16 @@ describe("summarizeStepConfig", () => {
     expect(summarizeStepConfig("archive", {})).toBe("No configuration needed.");
   });
 
+  it("summarizes promo-code by the discount amount and type", () => {
+    expect(summarizeStepConfig("promo-code", { discountType: "percentage", discountValue: 15 })).toBe(
+      "15% off"
+    );
+    expect(summarizeStepConfig("promo-code", { discountType: "fixed", discountValue: 10 })).toBe(
+      "$10 off"
+    );
+    expect(summarizeStepConfig("promo-code", {})).toBe("No discount configured yet.");
+  });
+
   it("falls back to the first recognized generic field for any other module", () => {
     expect(summarizeStepConfig("email", { subject: "Order confirmed", body: "..." })).toBe("Order confirmed");
     expect(summarizeStepConfig("webhook", { url: "https://example.com/hook" })).toBe("https://example.com/hook");

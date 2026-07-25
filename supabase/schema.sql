@@ -2118,3 +2118,59 @@ create policy "Users can delete variants for their own products"
       select id from products where shop_id in (select id from shops where user_id = (select auth.uid()))
     )
   );
+
+-- ==== Promo codes ====
+-- Written by lib/automation-modules/promo-code.ts as a retention/marketing
+-- action — not applied at checkout, since OrderHub never sees or controls
+-- the merchant's platform checkout. "Redeemed" is deliberately not
+-- tracked: nothing in this pipeline (Sheets/webhook payload) ever reports
+-- a promo code back, so this table only records that a code was issued,
+-- never whether it was actually used.
+create table if not exists promo_codes (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  -- Nullable: a promo code can be generated for an order whose customer
+  -- couldn't be resolved (no phone on the order — see customers table's
+  -- own comment), same "best effort, never blocks" posture as
+  -- orders.customer_id.
+  customer_id bigint references customers(id) on delete set null,
+  code text not null,
+  discount_type text not null check (discount_type in ('percentage', 'fixed')),
+  discount_value numeric(10, 2) not null,
+  expires_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists promo_codes_shop_code_key on promo_codes (shop_id, code);
+
+create index if not exists promo_codes_shop_id_idx on promo_codes (shop_id);
+create index if not exists promo_codes_customer_id_idx on promo_codes (customer_id);
+
+alter table promo_codes enable row level security;
+
+grant select, insert, update, delete on promo_codes to authenticated;
+
+drop policy if exists "Users can view promo codes for their own shops" on promo_codes;
+create policy "Users can view promo codes for their own shops"
+  on promo_codes for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can insert promo codes for their own shops" on promo_codes;
+create policy "Users can insert promo codes for their own shops"
+  on promo_codes for insert
+  to authenticated
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can update promo codes for their own shops" on promo_codes;
+create policy "Users can update promo codes for their own shops"
+  on promo_codes for update
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())))
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete promo codes for their own shops" on promo_codes;
+create policy "Users can delete promo codes for their own shops"
+  on promo_codes for delete
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));

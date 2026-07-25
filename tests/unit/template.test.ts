@@ -94,4 +94,19 @@ describe("renderTemplate", () => {
     const result = renderTemplate("[{{tracking_number}}]", fullOrder, { whatsapp: { messageId: "x" } });
     expect(result).toBe("[]");
   });
+
+  it("substitutes promo_code/discount_value/discount_type from context['promo-code'] when present", () => {
+    const result = renderTemplate(
+      "Use {{promo_code}} for {{discount_value}} off ({{discount_type}})",
+      fullOrder,
+      { "promo-code": { code: "VIP-ABCD1234", discountType: "percentage", discountValue: 15 } }
+    );
+
+    expect(result).toBe("Use VIP-ABCD1234 for 15 off (percentage)");
+  });
+
+  it("falls back to empty strings for promo code fields when context is omitted", () => {
+    const result = renderTemplate("[{{promo_code}}]", fullOrder);
+    expect(result).toBe("[]");
+  });
 });

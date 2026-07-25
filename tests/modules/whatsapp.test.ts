@@ -134,6 +134,21 @@ describe("whatsappModule.run", () => {
     expect(body.text.body).toBe("Your order is on its way — tracking: TRACK123 (DHL)");
   });
 
+  it("substitutes {{promo_code}} from a preceding Promo Code step's context", async () => {
+    getModuleCredentials.mockResolvedValue({ accessToken: "token-1", phoneNumberId: "phone-1" });
+    const fetchMock = mockFetchSequence([{ json: async () => ({ messages: [{ id: "wamid.abc" }] }) }]);
+
+    await whatsappModule.run(
+      baseOrder,
+      { template: "Here's {{discount_value}}% off your next order: {{promo_code}}" },
+      { "promo-code": { code: "VIP-ABCD1234", discountType: "percentage", discountValue: 15 } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.text.body).toBe("Here's 15% off your next order: VIP-ABCD1234");
+  });
+
   it("omits data entirely when the response has no message id", async () => {
     getModuleCredentials.mockResolvedValue({ accessToken: "token-1", phoneNumberId: "phone-1" });
     mockFetchSequence([{ json: async () => ({ messages: [] }) }]);

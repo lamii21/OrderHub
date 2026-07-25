@@ -136,6 +136,14 @@ export const MODULE_CATALOG: Record<string, ModuleCatalogEntry> = {
     purpose: "Stop the workflow unless a condition is met",
     configHint: "field (price, quantity, status, customer_city, platform), operator (>, <, >=, <=, ==, !=), value",
   },
+  "promo-code": {
+    name: "Promo Code",
+    icon: "🎟️",
+    category: "action",
+    purpose: "Generate a discount code for the customer",
+    configHint:
+      'discountType ("percentage" or "fixed"), discountValue (number), expiresInDays (optional), codePrefix (optional)',
+  },
 };
 
 const FALLBACK_ENTRY: ModuleCatalogEntry = {
@@ -184,6 +192,13 @@ export function summarizeStepConfig(moduleName: string, config: Record<string, u
     }
     case "archive":
       return "No configuration needed.";
+    case "promo-code": {
+      const { discountType, discountValue } = config as { discountType?: unknown; discountValue?: unknown };
+      if (typeof discountValue !== "number" || !Number.isFinite(discountValue)) {
+        return "No discount configured yet.";
+      }
+      return discountType === "percentage" ? `${discountValue}% off` : `$${discountValue} off`;
+    }
     default: {
       const fields = ["task", "subject", "template", "content", "provider", "webhookUrl", "url", "endpoint", "spreadsheetId"];
       for (const field of fields) {
