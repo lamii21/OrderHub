@@ -16,13 +16,14 @@ import { aiAgentModule } from "./ai-agent";
 import { delayModule } from "./delay";
 import { conditionModule } from "./condition";
 import { promoCodeModule } from "./promo-code";
+import { invoiceModule } from "./invoice";
 
 // The one and only place a module name maps to actual code — same registry
 // pattern as lib/platforms/index.ts's getConnector()/SUPPORTED_PLATFORMS.
-// Adding an 18th module tomorrow is one file + one line here — nothing in
+// Adding a 19th module tomorrow is one file + one line here — nothing in
 // the Execution Engine changes.
 //
-// Every one of the 17 modules is real: each validates its config and
+// Every one of the 18 modules is real: each validates its config and
 // returns a genuine structured result. Delay/Condition specifically return
 // the "waiting"/"stop" outcomes the Execution Engine supports (see
 // ModuleResult.outcome) rather than calling out to any external provider.
@@ -52,6 +53,7 @@ const modules: Record<string, AutomationModule> = {
   delay: delayModule,
   condition: conditionModule,
   "promo-code": promoCodeModule,
+  invoice: invoiceModule,
 };
 
 export function getAutomationModule(moduleName: string): AutomationModule | null {
@@ -105,6 +107,7 @@ const moduleLoaders: Record<string, ModuleLoader> = {
   delay: () => import("./delay").then((m) => m.delayModule),
   condition: () => import("./condition").then((m) => m.conditionModule),
   "promo-code": () => import("./promo-code").then((m) => m.promoCodeModule),
+  invoice: () => import("./invoice").then((m) => m.invoiceModule),
 };
 
 // Resolved modules are cached in memory after their first load — the JS

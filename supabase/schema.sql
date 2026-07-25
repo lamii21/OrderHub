@@ -2174,3 +2174,60 @@ create policy "Users can delete promo codes for their own shops"
   on promo_codes for delete
   to authenticated
   using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- ==== Invoices ====
+-- Written by lib/automation-modules/invoice.ts. The invoice number is
+-- derived from this table's own identity column (formatted as
+-- "INV-000123"), not a separate per-shop counter — a per-shop counter
+-- restarting at 1 would need a "select max(number)+1" read-then-write,
+-- reopening exactly the lost-update race already fixed elsewhere in this
+-- schema (createOrUpdateShop's own history). A single global identity
+-- column is atomic by construction, at the cost of gaps/no-restart-at-1
+-- per shop — a deliberate simplicity trade-off, not an oversight.
+--
+-- One row per order at most in practice (the module is only ever run
+-- once per order in a given workflow run), but nothing here enforces
+-- that — a merchant could reference the Invoice module twice in the same
+-- workflow, or across a retried run, and get two invoice numbers for the
+-- same order. Out of scope to prevent today.
+create table if not exists invoices (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  order_id bigint references orders(id) on delete set null,
+  customer_id bigint references customers(id) on delete set null,
+  amount numeric(10, 2) not null,
+  currency text not null default 'USD',
+  issued_at timestamptz not null default now()
+);
+
+create index if not exists invoices_shop_id_idx on invoices (shop_id);
+create index if not exists invoices_order_id_idx on invoices (order_id);
+
+alter table invoices enable row level security;
+
+grant select, insert, update, delete on invoices to authenticated;
+
+drop policy if exists "Users can view invoices for their own shops" on invoices;
+create policy "Users can view invoices for their own shops"
+  on invoices for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can insert invoices for their own shops" on invoices;
+create policy "Users can insert invoices for their own shops"
+  on invoices for insert
+  to authenticated
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can update invoices for their own shops" on invoices;
+create policy "Users can update invoices for their own shops"
+  on invoices for update
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())))
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete invoices for their own shops" on invoices;
+create policy "Users can delete invoices for their own shops"
+  on invoices for delete
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));

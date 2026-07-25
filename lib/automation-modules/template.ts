@@ -13,6 +13,11 @@ type PromoCodeContextData = {
   discountValue?: number;
 };
 
+type InvoiceContextData = {
+  invoiceNumber?: string;
+  invoiceAmount?: number;
+};
+
 // A fixed, whitelisted set of {{variable}} substitutions — deliberately not
 // a general templating engine (no loops, no expressions, no eval). Shared
 // by every module that sends a merchant-authored message (WhatsApp, Email,
@@ -26,13 +31,14 @@ type PromoCodeContextData = {
 // through every step's run() (lib/workflows/engine.ts) — this is what lets
 // a message step reference data a *previous* step in the same run produced
 // (e.g. a Delivery step's tracking number in a WhatsApp step right after
-// it), instead of only ever seeing the order itself. The Delivery and
-// Promo Code modules' output are exposed today (the concrete cases this
-// was built for); extending this to other modules' context data is just
-// adding more keys below, not a new mechanism.
+// it), instead of only ever seeing the order itself. The Delivery, Promo
+// Code, and Invoice modules' output are exposed today (the concrete
+// cases this was built for); extending this to other modules' context
+// data is just adding more keys below, not a new mechanism.
 export function renderTemplate(template: string, order: Order, context?: WorkflowContext): string {
   const delivery = context?.delivery as DeliveryContextData | undefined;
   const promoCode = context?.["promo-code"] as PromoCodeContextData | undefined;
+  const invoice = context?.invoice as InvoiceContextData | undefined;
 
   const values: Record<string, string> = {
     customer_name: order.customer_name ?? "",
@@ -51,6 +57,8 @@ export function renderTemplate(template: string, order: Order, context?: Workflo
     promo_code: promoCode?.code ?? "",
     discount_value: promoCode?.discountValue?.toString() ?? "",
     discount_type: promoCode?.discountType ?? "",
+    invoice_number: invoice?.invoiceNumber ?? "",
+    invoice_amount: invoice?.invoiceAmount?.toString() ?? "",
   };
 
   return template.replace(/{{\s*(\w+)\s*}}/g, (match, key: string) =>

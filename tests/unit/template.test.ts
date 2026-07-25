@@ -109,4 +109,14 @@ describe("renderTemplate", () => {
     const result = renderTemplate("[{{promo_code}}]", fullOrder);
     expect(result).toBe("[]");
   });
+
+  it("substitutes invoice_number/invoice_amount from context.invoice when present", () => {
+    const result = renderTemplate(
+      "Invoice {{invoice_number}} for {{invoice_amount}}",
+      fullOrder,
+      { invoice: { invoiceNumber: "INV-000123", invoiceAmount: 39.98 } }
+    );
+
+    expect(result).toBe("Invoice INV-000123 for 39.98");
+  });
 });

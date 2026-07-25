@@ -144,6 +144,13 @@ export const MODULE_CATALOG: Record<string, ModuleCatalogEntry> = {
     configHint:
       'discountType ("percentage" or "fixed"), discountValue (number), expiresInDays (optional), codePrefix (optional)',
   },
+  invoice: {
+    name: "Invoice",
+    icon: "🧾",
+    category: "action",
+    purpose: "Email the customer an invoice for their order",
+    configHint: "footerNote (optional text)",
+  },
 };
 
 const FALLBACK_ENTRY: ModuleCatalogEntry = {

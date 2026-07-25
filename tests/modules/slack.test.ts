@@ -102,6 +102,20 @@ describe("slackModule.run", () => {
     expect(body.text).toBe("Shipped: TRACK123");
   });
 
+  it("substitutes {{invoice_number}} from a preceding Invoice step's context", async () => {
+    const fetchMock = mockFetchSequence([{ status: 200, text: async () => "ok" }]);
+
+    await slackModule.run(
+      order,
+      { webhookUrl: "https://hooks.slack.com/x", template: "Invoice {{invoice_number}} sent" },
+      { invoice: { invoiceNumber: "INV-000123", invoiceAmount: 39.98 } }
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.text).toBe("Invoice INV-000123 sent");
+  });
+
   it("reports success: false on a non-2xx response, with the status/body captured in data", async () => {
     mockFetchSequence([{ ok: false, status: 500, text: async () => "server error" }]);
 

@@ -7,7 +7,7 @@ import {
 } from "@/lib/automation-modules";
 
 describe("automation module registry", () => {
-  it("registers exactly the 17 modules from the Automation Modules catalog", () => {
+  it("registers exactly the 18 modules from the Automation Modules catalog", () => {
     expect(AVAILABLE_MODULES.sort()).toEqual(
       [
         "whatsapp",
@@ -27,6 +27,7 @@ describe("automation module registry", () => {
         "delay",
         "condition",
         "promo-code",
+        "invoice",
       ].sort()
     );
   });
