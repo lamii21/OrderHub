@@ -345,6 +345,42 @@ describe("POST /api/orders — order.created dispatch", () => {
       { onConflict: "shop_id,order_id", ignoreDuplicates: true }
     );
   });
+
+  it("includes customer_email when the payload provides one", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest({ ...VALID_PAYLOAD, customer_email: "amina@example.com" }));
+
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ customer_email: "amina@example.com" }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
+
+  it("defaults customer_email to null when the payload omits it", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client, builders } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest(VALID_PAYLOAD));
+
+    expect(builders.orders[0].upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ customer_email: null }),
+      { onConflict: "shop_id,order_id", ignoreDuplicates: true }
+    );
+  });
 });
 
 describe("POST /api/orders — rate limiting", () => {

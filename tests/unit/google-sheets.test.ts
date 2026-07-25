@@ -134,7 +134,7 @@ describe("provisionShopSpreadsheet", () => {
       });
       expect(sheetsValuesUpdate).toHaveBeenCalledWith({
         spreadsheetId: "sheet-456",
-        range: "Orders!A1:H1",
+        range: "Orders!A1:I1",
         valueInputOption: "RAW",
         requestBody: {
           values: [
@@ -146,6 +146,7 @@ describe("provisionShopSpreadsheet", () => {
               "Product",
               "Quantity",
               "Price",
+              "Customer Email",
               "Synced",
             ],
           ],

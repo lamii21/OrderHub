@@ -75,6 +75,10 @@ export function validateOrderPayload(body: Record<string, unknown>): string | nu
     return `customer_address must be a string of at most ${MAX_TEXT_FIELD_LENGTH} characters`;
   }
 
+  if (!isValidOptionalTextField(body.customer_email)) {
+    return `customer_email must be a string of at most ${MAX_TEXT_FIELD_LENGTH} characters`;
+  }
+
   return null;
 }
 

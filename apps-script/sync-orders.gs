@@ -7,7 +7,13 @@ var API_SECRET = "PASTE_API_SECRET_HERE";                // must match API_SECRE
 // so nothing needs editing per shop. See getShopConfig() below.
 
 // Column layout on the "Orders" tab — row 1 is the header, data starts at row 2.
-// Column H (Synced) is written by this script; don't edit it by hand.
+// Column I (Synced) is written by this script; don't edit it by hand.
+//
+// Existing spreadsheets provisioned before Customer Email was added still
+// have the old A-H layout (Synced in H). This script's COL must match
+// whatever layout the bound spreadsheet actually has — re-pasting this
+// updated script onto an old sheet without also adding the Customer Email
+// column (and shifting Synced to I) will misread every row.
 var COL = {
   CUSTOMER_NAME: 1,    // A
   CUSTOMER_PHONE: 2,   // B
@@ -16,7 +22,8 @@ var COL = {
   PRODUCT: 5,          // E
   QUANTITY: 6,         // F
   PRICE: 7,            // G
-  SYNCED: 8            // H
+  CUSTOMER_EMAIL: 8,   // H
+  SYNCED: 9            // I
 };
 
 function onOpen() {
@@ -87,6 +94,7 @@ function sendOrdersToOrderHub() {
       customer_phone: data[row][COL.CUSTOMER_PHONE - 1],
       customer_city: data[row][COL.CUSTOMER_CITY - 1],
       customer_address: data[row][COL.CUSTOMER_ADDRESS - 1],
+      customer_email: data[row][COL.CUSTOMER_EMAIL - 1],
       product: data[row][COL.PRODUCT - 1],
       quantity: data[row][COL.QUANTITY - 1],
       price: data[row][COL.PRICE - 1]

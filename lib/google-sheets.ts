@@ -22,7 +22,7 @@ async function requireUserAuthClient(userId: string) {
   return authClient;
 }
 
-// Matches apps-script/sync-orders.gs's COL layout exactly (columns A-H).
+// Matches apps-script/sync-orders.gs's COL layout exactly (columns A-I).
 const ORDERS_HEADER_ROW = [
   "Customer Name",
   "Customer Phone",
@@ -31,6 +31,7 @@ const ORDERS_HEADER_ROW = [
   "Product",
   "Quantity",
   "Price",
+  "Customer Email",
   "Synced",
 ];
 
@@ -75,7 +76,7 @@ export async function provisionShopSpreadsheet(
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: "Orders!A1:H1",
+      range: "Orders!A1:I1",
       valueInputOption: "RAW",
       requestBody: { values: [ORDERS_HEADER_ROW] },
     });

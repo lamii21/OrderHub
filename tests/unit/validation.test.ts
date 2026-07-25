@@ -131,6 +131,22 @@ describe("validateOrderPayload", () => {
   it("accepts a customer_city exactly at the length cap", () => {
     expect(validateOrderPayload({ ...validPayload, customer_city: "x".repeat(500) })).toBeNull();
   });
+
+  it("accepts a valid customer_email", () => {
+    expect(
+      validateOrderPayload({ ...validPayload, customer_email: "amina@example.com" })
+    ).toBeNull();
+  });
+
+  it("accepts customer_email omitted entirely", () => {
+    expect(validateOrderPayload(validPayload)).toBeNull();
+  });
+
+  it("rejects a non-string customer_email", () => {
+    expect(validateOrderPayload({ ...validPayload, customer_email: 12345 })).toBe(
+      "customer_email must be a string of at most 500 characters"
+    );
+  });
 });
 
 describe("parsePositiveInt", () => {

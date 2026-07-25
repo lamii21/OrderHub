@@ -119,6 +119,7 @@ export async function POST(request: NextRequest) {
     customer_phone: body.customer_phone ?? null,
     customer_city: body.customer_city ?? null,
     customer_address: body.customer_address ?? null,
+    customer_email: body.customer_email ?? null,
     product: body.product,
     product_id: matchedProduct?.id ?? null,
     quantity: body.quantity,

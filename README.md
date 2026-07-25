@@ -155,7 +155,7 @@ RLS (not encrypted at rest — see Security Notes below for that trade-off).
 4. Generate an encryption key for stored refresh tokens: `openssl rand -base64 32`.
 5. (Optional) Build a template spreadsheet, if you want every shop to start from a shared layout
    instead of a blank one:
-   - Two tabs: **Orders** (columns A–H exactly matching `apps-script/sync-orders.gs`'s `COL`
+   - Two tabs: **Orders** (columns A–I exactly matching `apps-script/sync-orders.gs`'s `COL`
      layout) and **Config** (`B1` = shop name, `B2` = platform, both left blank).
    - `Extensions → Apps Script`, paste `apps-script/sync-orders.gs`, fill in `API_URL` (your
      deployed `/api/orders` URL) and `API_SECRET` (must match the Vercel env var) once — this is
