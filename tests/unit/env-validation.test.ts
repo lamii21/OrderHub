@@ -75,6 +75,8 @@ describe("validateEnvironment", () => {
       GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3000/api/google/callback",
       GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY: "aeWymEULXLMYZBA9saGFA2FiNuEo8qBBrEoLXpqXQTg=",
       GOOGLE_SHEETS_TEMPLATE_ID: "id",
+      NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "key",
     });
     const logSpy = vi.spyOn(console, "log");
 

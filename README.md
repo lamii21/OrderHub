@@ -91,6 +91,7 @@ the API route.
 | `SUPABASE_URL` | Everything | Supabase → Project Settings → API |
 | `SUPABASE_SERVICE_ROLE_KEY` | The webhook, the Google OAuth callback, scheduled platform sync — the flows with no logged-in user session (see Authentication below) | Supabase → Project Settings → API (the **secret** `service_role`/`sb_secret_...` key — never the `anon`/publishable one) |
 | `SUPABASE_ANON_KEY` | Login, every protected page, RLS-scoped queries | Supabase → Project Settings → API (the public `anon`/publishable key — safe by design, but used here server-only; see Authentication below) |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional — the dashboard's live-update push (`components/realtime-dashboard-refresher.tsx`) | Same values as `SUPABASE_URL`/`SUPABASE_ANON_KEY` above, just re-exposed under the `NEXT_PUBLIC_` prefix Next.js requires before a var reaches the browser bundle. Without these the dashboard still works, it just needs a manual reload to show a new order |
 | `API_SECRET` | The `/api/orders` webhook | Any value you generate yourself; it's the shared secret your Apps Script sends in the `x-api-key` header |
 | `CRON_SECRET` | The scheduled sync (`/api/cron/sync`), the automation retry sweep (`/api/cron/automation-retry`), and the metrics endpoint (`/api/metrics`) | Any value you generate yourself. On Vercel, an env var named exactly `CRON_SECRET` is auto-sent as `Authorization: Bearer <value>` by Vercel Cron Jobs; any other scheduler must send it explicitly |
 | `API_SECRET_PREVIOUS` / `CRON_SECRET_PREVIOUS` | Optional — rotating either secret without an instant cutover | Set to the *old* value while every caller (Apps Script deployments, the scheduler) is updated to the new one, then remove it |
@@ -139,6 +140,9 @@ RLS (not encrypted at rest — see Security Notes below for that trade-off).
 1. Create a project at supabase.com.
 2. SQL Editor → run all of `supabase/schema.sql`.
 3. Project Settings → API → copy the Project URL and the `service_role` secret key.
+4. (Optional, for the dashboard's live-update push) Database → Replication → add the `orders`
+   table to the `supabase_realtime` publication. Without this step the dashboard still works, it
+   just needs a manual reload to show a new order.
 
 ### 2. Google Cloud (only needed for Google Sheet auto-provisioning)
 
