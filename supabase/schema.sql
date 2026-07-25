@@ -2010,3 +2010,27 @@ as $$
   from orders
   where customer_id = p_customer_id;
 $$;
+
+-- ==== Stock decrement on order creation ====
+-- A real UPDATE ... WHERE, not a read-then-write from the application —
+-- supabase-js's query builder has no way to express "set this column to
+-- itself minus N" as a single atomic statement, and reading the current
+-- value in app code first would reopen exactly the kind of lost-update
+-- race already fixed elsewhere in this schema (see createOrUpdateShop's
+-- own history). A single UPDATE lets Postgres's own row lock serialize
+-- concurrent orders against the same product correctly.
+--
+-- Only touches a row whose stock_quantity is already a real number —
+-- NULL means "not tracked for this product" (never synced from a
+-- platform), and this function leaves that meaning alone rather than
+-- silently turning "unknown" into "zero". Clamped at 0 rather than going
+-- negative: a backorder/oversell scenario is out of scope here, this is
+-- a display number, not an inventory reservation system.
+create or replace function decrement_product_stock(p_product_id bigint, p_quantity integer)
+returns void
+language sql
+as $$
+  update products
+  set stock_quantity = greatest(stock_quantity - p_quantity, 0)
+  where id = p_product_id and stock_quantity is not null;
+$$;

@@ -447,6 +447,77 @@ describe("POST /api/orders — order.created dispatch", () => {
   });
 });
 
+describe("POST /api/orders — stock decrement", () => {
+  it("decrements stock for a new order with a matched product", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client } = createMockSupabase({
+      responses: {
+        products: { data: { id: 77 }, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+      rpc: { decrement_product_stock: { data: null, error: null } },
+    });
+    holder.client = client;
+
+    await POST(makeRequest(VALID_PAYLOAD));
+
+    expect(client.rpc).toHaveBeenCalledWith("decrement_product_stock", {
+      p_product_id: 77,
+      p_quantity: VALID_PAYLOAD.quantity,
+    });
+  });
+
+  it("does not decrement stock when no product matched", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client } = createMockSupabase({
+      responses: {
+        products: { data: null, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest(VALID_PAYLOAD));
+
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("does not decrement stock for a duplicate delivery (not a new order)", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const savedOrder = { id: 56, shop_id: 1, order_id: "SHOP-100" };
+    const { client } = createMockSupabase({
+      responses: {
+        products: { data: { id: 77 }, error: null },
+        orders: [
+          { data: null, error: null }, // ignoreDuplicates insert hits the existing row, DOES NOTHING
+          { data: savedOrder, error: null }, // fallback upsert updates it
+        ],
+      },
+    });
+    holder.client = client;
+
+    await POST(makeRequest({ ...VALID_PAYLOAD, order_id: "SHOP-100" }));
+
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("still returns 200 when the stock decrement RPC fails", async () => {
+    createOrUpdateShop.mockResolvedValue({ id: 1 });
+    const { client } = createMockSupabase({
+      responses: {
+        products: { data: { id: 77 }, error: null },
+        orders: { data: { id: 1, shop_id: 1 }, error: null },
+      },
+      rpc: { decrement_product_stock: { data: null, error: { message: "db error" } } },
+    });
+    holder.client = client;
+
+    const response = await POST(makeRequest(VALID_PAYLOAD));
+
+    expect(response.status).toBe(200);
+  });
+});
+
 describe("POST /api/orders — rate limiting", () => {
   it("returns 429 with a Retry-After header once a single caller exceeds the limit", async () => {
     createOrUpdateShop.mockResolvedValue({ id: 1 });

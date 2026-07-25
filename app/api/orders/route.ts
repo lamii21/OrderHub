@@ -208,6 +208,22 @@ export async function POST(request: NextRequest) {
     savedOrder = updatedOrder;
   }
 
+  // Best-effort, same "never blocks the order" posture as the product_id
+  // lookup above — a failed stock update is logged, never surfaced to the
+  // caller. Only for a genuinely new order: a duplicate/updated delivery
+  // of the same order_id must never decrement stock a second time for
+  // what is still, in the real world, one sale.
+  if (isNewOrder && matchedProduct?.id && typeof body.quantity === "number") {
+    const { error: stockError } = await supabase.rpc("decrement_product_stock", {
+      p_product_id: matchedProduct.id,
+      p_quantity: body.quantity,
+    });
+
+    if (stockError) {
+      console.error("Webhook: failed to decrement product stock:", stockError);
+    }
+  }
+
   // Fires after the order is already committed — automation is a
   // downstream effect of the order existing, never a precondition for
   // saving it. Wrapped so a Workflow Engine failure can never turn into a
