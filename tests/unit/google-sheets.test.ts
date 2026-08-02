@@ -1,19 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { driveFilesCopy, drivePermissionsCreate, sheetsCreate, sheetsValuesUpdate, sheetsValuesAppend } =
-  vi.hoisted(() => ({
-    driveFilesCopy: vi.fn(),
-    drivePermissionsCreate: vi.fn(),
-    sheetsCreate: vi.fn(),
-    sheetsValuesUpdate: vi.fn(),
-    sheetsValuesAppend: vi.fn(),
-  }));
+const {
+  driveFilesCopy,
+  drivePermissionsCreate,
+  sheetsCreate,
+  sheetsValuesUpdate,
+  sheetsValuesAppend,
+  scriptProjectsCreate,
+  scriptProjectsUpdateContent,
+} = vi.hoisted(() => ({
+  driveFilesCopy: vi.fn(),
+  drivePermissionsCreate: vi.fn(),
+  sheetsCreate: vi.fn(),
+  sheetsValuesUpdate: vi.fn(),
+  sheetsValuesAppend: vi.fn(),
+  scriptProjectsCreate: vi.fn(),
+  scriptProjectsUpdateContent: vi.fn(),
+}));
 
 // Mocks the googleapis package itself, one level below lib/google-sheets.ts
 // — this is the one place lib/google-sheets.ts's own logic (the exact
-// requestBody shape sent to Drive/Sheets, response parsing) actually gets
-// exercised. Credential-building (which account, whether one exists) is a
-// separate concern mocked below via @/lib/google-oauth.
+// requestBody shape sent to Drive/Sheets/Script, response parsing) actually
+// gets exercised. Credential-building (which account, whether one exists)
+// is a separate concern mocked below via @/lib/google-oauth.
 vi.mock("googleapis", () => ({
   google: {
     drive: vi.fn(() => ({
@@ -25,6 +34,9 @@ vi.mock("googleapis", () => ({
         create: sheetsCreate,
         values: { update: sheetsValuesUpdate, append: sheetsValuesAppend },
       },
+    })),
+    script: vi.fn(() => ({
+      projects: { create: scriptProjectsCreate, updateContent: scriptProjectsUpdateContent },
     })),
   },
 }));
@@ -51,10 +63,17 @@ beforeEach(() => {
   sheetsCreate.mockReset();
   sheetsValuesUpdate.mockReset();
   sheetsValuesAppend.mockReset();
+  scriptProjectsCreate.mockReset();
+  scriptProjectsUpdateContent.mockReset();
   buildUserOAuth2Client.mockReset();
   getUserIdForShop.mockReset();
   buildUserOAuth2Client.mockResolvedValue(FAKE_AUTH_CLIENT);
   delete process.env.GOOGLE_SHEETS_TEMPLATE_ID;
+  // Default to success so tests that don't care about script provisioning
+  // (e.g. the template-path suite, where it's never invoked at all) don't
+  // each need their own boilerplate mock.
+  scriptProjectsCreate.mockResolvedValue({ data: { scriptId: "script-789" } });
+  scriptProjectsUpdateContent.mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -159,6 +178,64 @@ describe("provisionShopSpreadsheet", () => {
         requestBody: { values: [["Acme Store"], ["Shopify"]] },
       });
       expect(result).toEqual({ id: "sheet-456", name: "Acme Store" });
+    });
+
+    it("also creates a bound Apps Script project and pushes sync-orders.gs into it", async () => {
+      sheetsCreate.mockResolvedValue({
+        data: { spreadsheetId: "sheet-456", properties: { title: "Acme Store" } },
+      });
+      sheetsValuesUpdate.mockResolvedValue({});
+
+      await provisionShopSpreadsheet("user-1", "Acme Store", "Shopify");
+
+      expect(scriptProjectsCreate).toHaveBeenCalledWith({
+        requestBody: { title: "OrderHub Sync", parentId: "sheet-456" },
+      });
+      const updateCall = scriptProjectsUpdateContent.mock.calls[0][0];
+      expect(updateCall.scriptId).toBe("script-789");
+      const fileNames = updateCall.requestBody.files.map((f: { name: string }) => f.name);
+      expect(fileNames).toEqual(["sync-orders", "appsscript"]);
+      const sourceFile = updateCall.requestBody.files.find(
+        (f: { name: string }) => f.name === "sync-orders"
+      );
+      expect(sourceFile.type).toBe("SERVER_JS");
+      expect(sourceFile.source).toContain("sendOrdersToOrderHub");
+      const manifestFile = updateCall.requestBody.files.find(
+        (f: { name: string }) => f.name === "appsscript"
+      );
+      expect(manifestFile.type).toBe("JSON");
+      expect(JSON.parse(manifestFile.source)).toEqual({
+        timeZone: "Etc/UTC",
+        exceptionLogging: "STACKDRIVER",
+        runtimeVersion: "V8",
+      });
+    });
+
+    it("still returns a usable spreadsheet when script provisioning fails (best-effort)", async () => {
+      sheetsCreate.mockResolvedValue({
+        data: { spreadsheetId: "sheet-456", properties: { title: "Acme Store" } },
+      });
+      sheetsValuesUpdate.mockResolvedValue({});
+      scriptProjectsCreate.mockRejectedValue(new Error("Apps Script API has not been used"));
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+      const result = await provisionShopSpreadsheet("user-1", "Acme Store", "Shopify");
+
+      expect(result).toEqual({ id: "sheet-456", name: "Acme Store" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "google_sheets.script_provisioning_skipped",
+        expect.objectContaining({ spreadsheetId: "sheet-456" })
+      );
+    });
+
+    it("never attempts to create a bound script on the template path", async () => {
+      process.env.GOOGLE_SHEETS_TEMPLATE_ID = "test-template-id";
+      driveFilesCopy.mockResolvedValue({ data: { id: "sheet-123", name: "Acme Store" } });
+      sheetsValuesUpdate.mockResolvedValue({});
+
+      await provisionShopSpreadsheet("user-1", "Acme Store", "Shopify");
+
+      expect(scriptProjectsCreate).not.toHaveBeenCalled();
     });
   });
 });

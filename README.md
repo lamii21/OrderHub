@@ -513,6 +513,30 @@ quota error — a service account has 0 bytes of its own Drive storage, and copy
 tries to create the copy owned by the caller. Per-user OAuth fixes this at the root: every
 spreadsheet is created inside the *connecting user's own* Drive, which has real quota.
 
+### Apps Script auto-provisioning (and its hard limit)
+
+When `provisionShopSpreadsheet` creates a spreadsheet from scratch (no `GOOGLE_SHEETS_TEMPLATE_ID`
+configured), it also creates a script bound to that spreadsheet and pushes
+`apps-script/sync-orders.gs`'s own content into it (`provisionBoundScript` in
+`lib/google-sheets.ts`), via the Apps Script REST API (`google.script`, scope
+`https://www.googleapis.com/auth/script.projects`). This is best-effort — a failure here (most
+commonly the connected account never having turned on the **"Google Apps Script API"** toggle at
+`script.google.com/home/usersettings`, a per-account setting nothing here can flip on their behalf)
+never blocks spreadsheet provisioning; the merchant falls back to pasting the script in by hand,
+same as before this existed.
+
+**This cannot be made fully hands-off — that's a Google platform limit, not a gap in this code.**
+The Apps Script REST API can create a bound script and push its source, but it cannot install the
+time-driven trigger or grant the script's own runtime authorization (`UrlFetchApp`,
+`SpreadsheetApp`): both only happen when a human opens the script and clicks Run once, which is
+exactly what the script's own "Enable Automatic Sync" menu item is for. One manual step remains by
+design, not by oversight.
+
+Operational note: this scope was added after the OAuth flow already shipped, so **every
+already-connected Google account must disconnect and reconnect** to be asked for it — Google only
+requests a newly added scope on the next consent screen, never retroactively for an existing
+grant.
+
 ### What was deliberately not built
 
 Per the brief: no roles/permission levels (the Admin Center is not a separate privilege tier — see

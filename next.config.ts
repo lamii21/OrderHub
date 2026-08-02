@@ -1,6 +1,19 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // lib/google-sheets.ts reads apps-script/sync-orders.gs off disk at
+  // runtime (to push it into a freshly provisioned spreadsheet's bound
+  // Apps Script project) — Next's serverless file tracing only bundles
+  // files it can see referenced from actual import statements, and a
+  // runtime fs.readFileSync() path isn't one, so this has to be listed
+  // explicitly or the file would be present in local dev and silently
+  // missing on Vercel. Scoped to the routes that can reach it: the 3
+  // Server Actions that call provisionShopSpreadsheet.
+  outputFileTracingIncludes: {
+    "/shops/new": ["./apps-script/sync-orders.gs"],
+    "/shops/connect": ["./apps-script/sync-orders.gs"],
+    "/shops/[id]/settings": ["./apps-script/sync-orders.gs"],
+  },
   // Content-Security-Policy lives in proxy.ts instead of here (see
   // lib/csp.ts) — it needs a fresh nonce per request for Next's own
   // hydration scripts, which only middleware can generate; this file's

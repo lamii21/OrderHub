@@ -15,11 +15,24 @@ import { logger } from "@/lib/logger";
 // response's id_token, no separate userinfo API call/extra scope needed.
 // drive.file (not the full drive scope) + spreadsheets: the same narrow,
 // minimal-blast-radius scopes the old service account used.
+//
+// script.projects: lets provisionShopSpreadsheet's from-scratch path create
+// a bound Apps Script project and push apps-script/sync-orders.gs's content
+// into it (see lib/google-sheets.ts's provisionBoundScript). This is the
+// most sensitive scope this app requests — Google classifies Apps Script
+// project access as restricted — and it cannot, by itself, finish the job:
+// installing the time-driven trigger and granting the script's own runtime
+// authorization (UrlFetchApp, SpreadsheetApp) both require the script to
+// run once under its own OAuth grant, which only happens when a human
+// opens it and clicks Run. Every already-connected account must reconnect
+// (re-consent) once this scope is added — Google only asks for a newly
+// added scope on the next authorization, never retroactively.
 const SCOPES = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/script.projects",
 ];
 
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;

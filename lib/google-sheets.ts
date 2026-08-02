@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { google } from "googleapis";
 import { buildUserOAuth2Client, getUserIdForShop } from "@/lib/google-oauth";
 import { logger } from "@/lib/logger";
@@ -34,6 +36,64 @@ const ORDERS_HEADER_ROW = [
   "Customer Email",
   "Synced",
 ];
+
+// Minimal manifest every Apps Script project requires alongside its source
+// file. No explicit oauthScopes listed — Apps Script auto-detects the
+// scopes sync-orders.gs actually needs (SpreadsheetApp, UrlFetchApp,
+// ScriptApp) from its code the first time it runs, same as it would for a
+// script pasted in by hand.
+const APPS_SCRIPT_MANIFEST = JSON.stringify({
+  timeZone: "Etc/UTC",
+  exceptionLogging: "STACKDRIVER",
+  runtimeVersion: "V8",
+});
+
+// Reads the exact same file a merchant would otherwise copy-paste by hand
+// (see README's fallback instructions) — one source of truth, so the
+// auto-pushed script can never drift from the manually-documented one.
+function readSyncScriptSource(): string {
+  return readFileSync(join(process.cwd(), "apps-script", "sync-orders.gs"), "utf8");
+}
+
+// Creates a script bound to the spreadsheet (parentId) and pushes
+// apps-script/sync-orders.gs's own content into it — as far as the Apps
+// Script REST API can go non-interactively. It cannot install the
+// time-driven trigger or grant the script's own runtime authorization
+// (UrlFetchApp, SpreadsheetApp): both require the script to run once under
+// its own OAuth grant, which only happens when a human opens it and clicks
+// Run — a hard platform limit, not a gap in this function. That one
+// remaining step is exactly what the script's own "Enable Automatic Sync"
+// menu item (installAutoSyncTrigger) is for.
+//
+// Also requires the connected Google account to have the "Google Apps
+// Script API" toggle turned on at script.google.com/home/usersettings — a
+// per-user setting nothing here can flip on their behalf. When it's off,
+// this call fails with a 403; the caller (provisionShopSpreadsheet) treats
+// that identically to any other failure here: best-effort, never blocking.
+async function provisionBoundScript(
+  authClient: InstanceType<typeof google.auth.OAuth2>,
+  spreadsheetId: string
+): Promise<void> {
+  const script = google.script({ version: "v1", auth: authClient });
+
+  const project = await script.projects.create({
+    requestBody: { title: "OrderHub Sync", parentId: spreadsheetId },
+  });
+  const scriptId = project.data.scriptId;
+  if (!scriptId) {
+    throw new Error("Apps Script project creation returned no scriptId");
+  }
+
+  await script.projects.updateContent({
+    scriptId,
+    requestBody: {
+      files: [
+        { name: "sync-orders", type: "SERVER_JS", source: readSyncScriptSource() },
+        { name: "appsscript", type: "JSON", source: APPS_SCRIPT_MANIFEST },
+      ],
+    },
+  });
+}
 
 // If GOOGLE_SHEETS_TEMPLATE_ID is set, duplicates that template (keeping
 // whatever formatting/Apps Script binding it has) and fills its Config tab.
@@ -80,6 +140,19 @@ export async function provisionShopSpreadsheet(
       valueInputOption: "RAW",
       requestBody: { values: [ORDERS_HEADER_ROW] },
     });
+
+    // Best-effort, same posture as provisionShopSpreadsheetOrSkip around
+    // this whole function: a merchant must always get a working spreadsheet
+    // back, with or without an attached script. On failure, they fall back
+    // to today's behavior — paste apps-script/sync-orders.gs in by hand.
+    try {
+      await provisionBoundScript(authClient, spreadsheetId);
+    } catch (err) {
+      logger.warn("google_sheets.script_provisioning_skipped", {
+        spreadsheetId,
+        error: String(err),
+      });
+    }
   }
 
   await sheets.spreadsheets.values.update({
