@@ -323,7 +323,7 @@ describe("retryFailedWorkflowExecutions", () => {
     expect(runWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1 }),
       expect.objectContaining({ id: 100 }),
-      { skipStepOrders: new Set([1, 2]) }
+      { skipStepOrders: new Set([1, 2]), bypassCircuitBreaker: true }
     );
   });
 
@@ -346,7 +346,7 @@ describe("retryFailedWorkflowExecutions", () => {
     expect(runWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1 }),
       expect.objectContaining({ id: 100 }),
-      { skipStepOrders: undefined }
+      { skipStepOrders: undefined, bypassCircuitBreaker: true }
     );
   });
 });

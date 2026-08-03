@@ -146,7 +146,11 @@ export async function retryFailedWorkflowExecutions() {
     ).values()
   );
 
-  const retried = await retryWorkflowExecutions(supabase, uniquePairs);
+  // bypassCircuitBreaker: true — a human clicking this button is exactly
+  // the deliberate "try it again for real" action that's supposed to be
+  // able to close an open circuit (see runWorkflow's own comment); nothing
+  // else on this path ever gets another chance to.
+  const retried = await retryWorkflowExecutions(supabase, uniquePairs, undefined, true);
 
   redirect(`/admin?workflow_retried=${retried}`);
 }

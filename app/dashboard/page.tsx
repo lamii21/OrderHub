@@ -125,7 +125,6 @@ export default async function DashboardPage({
   return (
     <main className="mx-auto max-w-6xl p-6">
       <RealtimeDashboardRefresher />
-      <RealtimeDashboardRefresher />
       <h1 className="mb-4 text-2xl font-semibold">Orders</h1>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">

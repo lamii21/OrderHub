@@ -96,6 +96,23 @@ describe("retryWorkflowExecutions", () => {
     });
   });
 
+  it("passes bypassCircuitBreaker through to runWorkflow only when explicitly requested", async () => {
+    const { client } = createMockSupabase({
+      responses: {
+        workflows: { data: [{ id: 1, name: "A", workflow_steps: [] }], error: null },
+        orders: { data: [{ id: 100 }], error: null },
+        workflow_executions: { data: [], error: null },
+      },
+    });
+
+    await retryWorkflowExecutions(client as never, [{ workflow_id: 1, order_id: 100 }], undefined, true);
+
+    expect(runWorkflow).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      skipStepOrders: undefined,
+      bypassCircuitBreaker: true,
+    });
+  });
+
   it("skips a pair when the workflow or order no longer exists", async () => {
     const { client } = createMockSupabase({
       responses: {

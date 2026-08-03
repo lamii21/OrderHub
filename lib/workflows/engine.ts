@@ -24,6 +24,20 @@ export type RunWorkflowOptions = {
   // if one ever does, that module's shouldRun()/run() should tolerate a
   // missing context entry regardless of retries.
   skipStepOrders?: Set<number>;
+
+  // Lets a genuinely new attempt through even if isCircuitOpen() would say
+  // otherwise — set only by a human clicking "Retry Failed Executions" in
+  // the Admin Error Center (via retryWorkflowExecutions' own
+  // bypassCircuitBreaker parameter), never by the automatic webhook
+  // dispatch or the automation-retry cron. Without this, an open circuit
+  // was permanently stuck: every path that could reach a circuit-open step
+  // — including a manual retry — only ever recorded another "Circuit open"
+  // skip, which itself counts as a new consecutive failure, so the one
+  // thing that's supposed to close the circuit (a real attempt succeeding)
+  // could never happen. A human explicitly retrying is exactly the
+  // deliberate "test if it's fixed now" action a circuit breaker is meant
+  // to allow through.
+  bypassCircuitBreaker?: boolean;
 };
 
 // Defense-in-depth, shared by runWorkflow() and resumeWorkflow(): workflow_
@@ -98,8 +112,12 @@ async function runSteps(
     // already shown it won't succeed (a dead endpoint, revoked
     // credentials). The next order still gets its own check, so a fix to
     // the underlying problem (or the module simply succeeding once) closes
-    // the circuit again automatically.
-    if (await isCircuitOpen(workflow.id, step.step_order, step.module_name)) {
+    // the circuit again automatically — via a human retrying by hand
+    // (options.bypassCircuitBreaker), since nothing else ever calls the
+    // module again once the circuit is open. Short-circuits before even
+    // calling isCircuitOpen when bypassed, so a manual retry never pays for
+    // a query whose answer it's about to ignore.
+    if (!options.bypassCircuitBreaker && (await isCircuitOpen(workflow.id, step.step_order, step.module_name))) {
       await recordWorkflowExecution({
         workflowId: workflow.id,
         orderId: order.id,

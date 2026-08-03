@@ -39,7 +39,15 @@ type Db = SupabaseClient;
 export async function retryWorkflowExecutions(
   db: Db,
   pairs: WorkflowOrderPair[],
-  extraSkipStepOrdersByPair?: Map<string, Set<number>>
+  extraSkipStepOrdersByPair?: Map<string, Set<number>>,
+  // Threaded straight through to runWorkflow's own option of the same name
+  // (see engine.ts) — true only for the Admin Center's manual button, never
+  // for the automation-retry cron (which already excludes circuit-open
+  // steps itself, via getBackoffEligiblePairs' own isCircuitOpen check).
+  // Omitted (not just false) when unset, same "undefined vs explicit skip
+  // nothing" distinction skipStepOrders already makes below, so the cron's
+  // call site is byte-for-byte unchanged by this parameter existing.
+  bypassCircuitBreaker?: boolean
 ): Promise<number> {
   if (pairs.length === 0) {
     return 0;
@@ -115,7 +123,10 @@ export async function retryWorkflowExecutions(
     const skipStepOrders = combined.size > 0 ? combined : undefined;
 
     try {
-      await runWorkflow(workflow, order as Order, { skipStepOrders });
+      await runWorkflow(workflow, order as Order, {
+        skipStepOrders,
+        ...(bypassCircuitBreaker ? { bypassCircuitBreaker: true } : {}),
+      });
       retried++;
     } catch (err) {
       console.error(

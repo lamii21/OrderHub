@@ -196,6 +196,28 @@ describe("runWorkflow", () => {
     );
   });
 
+  // Regression test for the "circuit can never close again" bug: with no
+  // bypass, every single call path (automatic dispatch, a manual retry)
+  // only ever recorded another "Circuit open" skip once the circuit
+  // tripped, which itself counted as a fresh consecutive failure — so the
+  // one thing that's supposed to close a circuit (a real attempt
+  // succeeding) could never happen, permanently. bypassCircuitBreaker is
+  // the human-initiated escape hatch: it must skip isCircuitOpen entirely
+  // (not just ignore its result) and actually call the module for real.
+  it("calls the module for real when bypassCircuitBreaker is set, even with an open circuit", async () => {
+    const run = vi.fn().mockResolvedValue({ success: true });
+    getAutomationModule.mockReturnValue({ run });
+    isCircuitOpen.mockResolvedValue(true);
+    const workflow = workflowWithSteps([
+      { id: 1, workflow_id: 1, step_order: 1, module_name: "whatsapp", config: {} },
+    ]);
+
+    await runWorkflow(workflow, order, { bypassCircuitBreaker: true });
+
+    expect(isCircuitOpen).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("still runs a step normally when its circuit is closed", async () => {
     const run = vi.fn().mockResolvedValue({ success: true });
     getAutomationModule.mockReturnValue({ run });
