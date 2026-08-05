@@ -38,6 +38,11 @@ const USER_FACING_TABLES = [
   "product_variants",
   "promo_codes",
   "invoices",
+  "ai_agents",
+  "agent_conversations",
+  "agent_messages",
+  "agent_documents",
+  "agent_document_chunks",
 ] as const;
 
 function extractTableNames(sql: string): string[] {
@@ -112,7 +117,19 @@ describe("RLS — ownership chains trace back to the owning shop's user_id", () 
     }
   });
 
-  it.each(["orders", "products", "sync_history", "workflows", "module_credentials", "customers", "promo_codes", "invoices"])(
+  it.each([
+    "orders",
+    "products",
+    "sync_history",
+    "workflows",
+    "module_credentials",
+    "customers",
+    "promo_codes",
+    "invoices",
+    "ai_agents",
+    "agent_conversations",
+    "agent_documents",
+  ])(
     "%s: every policy scopes via shop_id -> shops.user_id, not a bare/unscoped check",
     (table) => {
       const tablePolicies = policiesFor(table);
@@ -124,6 +141,26 @@ describe("RLS — ownership chains trace back to the owning shop's user_id", () 
       }
     }
   );
+
+  it("agent_messages: every policy scopes via conversation_id -> agent_conversations.shop_id -> shops.user_id", () => {
+    const tablePolicies = policiesFor("agent_messages");
+    expect(tablePolicies.length).toBeGreaterThan(0);
+    for (const policy of tablePolicies) {
+      expect(policy.body.replace(/\s+/g, " ")).toContain(
+        "conversation_id in ( select id from agent_conversations where shop_id in (select id from shops where user_id = (select auth.uid())) )"
+      );
+    }
+  });
+
+  it("agent_document_chunks: every policy scopes via document_id -> agent_documents.shop_id -> shops.user_id (never the denormalized shop_id column)", () => {
+    const tablePolicies = policiesFor("agent_document_chunks");
+    expect(tablePolicies.length).toBeGreaterThan(0);
+    for (const policy of tablePolicies) {
+      expect(policy.body.replace(/\s+/g, " ")).toContain(
+        "document_id in ( select id from agent_documents where shop_id in (select id from shops where user_id = (select auth.uid())) )"
+      );
+    }
+  });
 
   it.each(["workflow_steps", "workflow_executions", "workflow_waits"])(
     "%s: every policy scopes via workflow_id -> workflows.shop_id -> shops.user_id",
@@ -189,7 +226,7 @@ describe("RLS — tables written exclusively by the service-role client grant no
   // background jobs (the Execution Engine, the sync pipeline) using the
   // service-role client, which bypasses RLS entirely — the `authenticated`
   // role (real logged-in users) should only ever be able to read them.
-  it.each(["workflow_executions", "sync_history", "order_notes"])(
+  it.each(["workflow_executions", "sync_history", "order_notes", "agent_conversations", "agent_messages"])(
     "%s grants only select to authenticated",
     (table) => {
       const match = schemaSql.match(new RegExp(`grant ([\\w, ]+) on ${table} to authenticated;`));

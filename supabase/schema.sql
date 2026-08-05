@@ -2231,3 +2231,316 @@ create policy "Users can delete invoices for their own shops"
   on invoices for delete
   to authenticated
   using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- ===========================================================================
+-- AI Commerce Agent — conversational sales agent per shop (schema only; the
+-- engine, providers, RAG, and WhatsApp webhook that populate these tables
+-- arrive in later phases). See the Phase 1 architecture doc for the full
+-- design; this migration only creates what Phases 3-8 actually need —
+-- agent_actions_log and support_tickets are deliberately deferred to the
+-- Tool Calling phase that gives them something real to log, same "add a
+-- table with the feature that uses it" discipline as customers/
+-- product_variants/promo_codes/invoices above.
+-- ===========================================================================
+
+-- One row per shop's agent configuration — 1:1 with shops (a shop either has
+-- an agent configured or doesn't). The provider's own API key lives in
+-- module_credentials under module_name 'ai-sales-agent', deliberately not
+-- 'ai-agent' — that name is already taken by the existing single-turn
+-- classification module (lib/automation-modules/ai-agent.ts); reusing it
+-- here would silently overwrite that module's own Anthropic credentials the
+-- first time either one is saved.
+create table if not exists ai_agents (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  is_active boolean not null default false,
+  system_prompt text,
+  tone text not null default 'friendly' check (tone in ('friendly', 'professional', 'casual', 'formal')),
+  -- 'ar-ma' = Darija (Moroccan Arabic). Latin-script vs Arabic-script Darija
+  -- is a prompting concern, not a data-modeling one, so it isn't split here.
+  languages text[] not null default array['fr', 'en', 'ar-ma'],
+  ai_provider text not null default 'openrouter',
+  ai_model text,
+  -- Explicit opt-in whitelist, empty by default (see Phase 1 doc §6) — no
+  -- CHECK against a fixed tool list here, since that list grows in Phase 9
+  -- and belongs to application code (lib/agent/tools.ts), not a migration.
+  enabled_tools text[] not null default array[]::text[],
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists ai_agents_shop_id_key on ai_agents (shop_id);
+
+alter table ai_agents enable row level security;
+
+grant select, insert, update, delete on ai_agents to authenticated;
+
+drop policy if exists "Users can view their own shop's AI agent" on ai_agents;
+create policy "Users can view their own shop's AI agent"
+  on ai_agents for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can insert their own shop's AI agent" on ai_agents;
+create policy "Users can insert their own shop's AI agent"
+  on ai_agents for insert
+  to authenticated
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can update their own shop's AI agent" on ai_agents;
+create policy "Users can update their own shop's AI agent"
+  on ai_agents for update
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())))
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete their own shop's AI agent" on ai_agents;
+create policy "Users can delete their own shop's AI agent"
+  on ai_agents for delete
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- One thread per (shop, channel, external identifier) — e.g. one row per
+-- WhatsApp wa_id per shop. Written exclusively by the inbound webhook
+-- (Phase 8) and the agent engine (Phase 5), both server-side with no
+-- Supabase session of their own (the webhook has no logged-in user at all)
+-- — same "service-role writes, authenticated only reads" split already used
+-- for workflow_executions/sync_history/order_notes below.
+create table if not exists agent_conversations (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  customer_id bigint references customers(id),
+  channel text not null default 'whatsapp' check (channel in ('whatsapp')),
+  external_thread_id text not null,
+  status text not null default 'open' check (status in ('open', 'resolved', 'escalated')),
+  last_message_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists agent_conversations_thread_key
+  on agent_conversations (shop_id, channel, external_thread_id);
+
+create index if not exists agent_conversations_customer_id_idx
+  on agent_conversations (customer_id);
+
+alter table agent_conversations enable row level security;
+
+grant select on agent_conversations to authenticated;
+
+drop policy if exists "Users can view conversations for their own shops" on agent_conversations;
+create policy "Users can view conversations for their own shops"
+  on agent_conversations for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- The conversation's memory — one row per message, in order. Same write
+-- posture as agent_conversations: only the webhook and the engine ever
+-- write here, never the browser.
+create table if not exists agent_messages (
+  id bigint generated always as identity primary key,
+  conversation_id bigint not null references agent_conversations(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant', 'system', 'tool')),
+  content text not null,
+  detected_language text,
+  detected_intent text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists agent_messages_conversation_id_idx
+  on agent_messages (conversation_id, created_at);
+
+alter table agent_messages enable row level security;
+
+grant select on agent_messages to authenticated;
+
+drop policy if exists "Users can view messages for their own shops' conversations" on agent_messages;
+create policy "Users can view messages for their own shops' conversations"
+  on agent_messages for select
+  to authenticated
+  using (
+    conversation_id in (
+      select id from agent_conversations
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+-- Raw RAG source material — a merchant-entered FAQ, a policy, or text
+-- already extracted server-side from an uploaded PDF (extraction happens in
+-- application code before the insert; this table only ever stores plain
+-- text, never a binary). Written by a real merchant Server Action in their
+-- own session — full CRUD, same shape as customers/promo_codes.
+create table if not exists agent_documents (
+  id bigint generated always as identity primary key,
+  shop_id bigint not null references shops(id) on delete cascade,
+  type text not null check (type in ('faq', 'policy', 'pdf', 'note')),
+  title text not null,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists agent_documents_shop_id_idx on agent_documents (shop_id);
+
+alter table agent_documents enable row level security;
+
+grant select, insert, update, delete on agent_documents to authenticated;
+
+drop policy if exists "Users can view documents for their own shops" on agent_documents;
+create policy "Users can view documents for their own shops"
+  on agent_documents for select
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can insert documents for their own shops" on agent_documents;
+create policy "Users can insert documents for their own shops"
+  on agent_documents for insert
+  to authenticated
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can update documents for their own shops" on agent_documents;
+create policy "Users can update documents for their own shops"
+  on agent_documents for update
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())))
+  with check (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+drop policy if exists "Users can delete documents for their own shops" on agent_documents;
+create policy "Users can delete documents for their own shops"
+  on agent_documents for delete
+  to authenticated
+  using (shop_id in (select id from shops where user_id = (select auth.uid())));
+
+-- Available on every Supabase project regardless of plan — no new
+-- infrastructure, same "no new infra" rule this project applies everywhere
+-- (no Redis, no queue).
+create extension if not exists vector;
+
+-- Searchable chunks + embeddings — what RAG actually queries (Phase 6).
+-- shop_id is deliberately duplicated from agent_documents here: it's a
+-- query-performance column only (filters the vector search to one shop
+-- without a join on the hot path), never the basis for authorization — the
+-- RLS policies below still trace the real document_id -> agent_documents
+-- .shop_id chain, exactly like product_variants traces product_id rather
+-- than trusting a shortcut column.
+--
+-- vector(768) matches a Gemini text-embedding-004 embedding (free tier) —
+-- the concrete provider choice belongs to Phase 3/6, not this migration;
+-- switching embedding models later is an `alter column embedding type
+-- vector(N)` migration, not a schema redesign.
+create table if not exists agent_document_chunks (
+  id bigint generated always as identity primary key,
+  document_id bigint not null references agent_documents(id) on delete cascade,
+  shop_id bigint not null references shops(id) on delete cascade,
+  content text not null,
+  embedding vector(768),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists agent_document_chunks_document_id_idx
+  on agent_document_chunks (document_id);
+
+-- hnsw over ivfflat deliberately: ivfflat's quality depends on a `lists`
+-- parameter tuned to the row count at build time, which is meaningless on a
+-- table starting at zero rows and would need periodic reindexing as it
+-- grows. hnsw has no such parameter to get wrong and needs no maintenance
+-- as the table grows — the right default for a table with no data yet.
+create index if not exists agent_document_chunks_embedding_idx
+  on agent_document_chunks using hnsw (embedding vector_cosine_ops);
+
+alter table agent_document_chunks enable row level security;
+
+grant select, insert, update, delete on agent_document_chunks to authenticated;
+
+drop policy if exists "Users can view chunks for their own shops' documents" on agent_document_chunks;
+create policy "Users can view chunks for their own shops' documents"
+  on agent_document_chunks for select
+  to authenticated
+  using (
+    document_id in (
+      select id from agent_documents
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can insert chunks for their own shops' documents" on agent_document_chunks;
+create policy "Users can insert chunks for their own shops' documents"
+  on agent_document_chunks for insert
+  to authenticated
+  with check (
+    document_id in (
+      select id from agent_documents
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can update chunks for their own shops' documents" on agent_document_chunks;
+create policy "Users can update chunks for their own shops' documents"
+  on agent_document_chunks for update
+  to authenticated
+  using (
+    document_id in (
+      select id from agent_documents
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  )
+  with check (
+    document_id in (
+      select id from agent_documents
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+drop policy if exists "Users can delete chunks for their own shops' documents" on agent_document_chunks;
+create policy "Users can delete chunks for their own shops' documents"
+  on agent_document_chunks for delete
+  to authenticated
+  using (
+    document_id in (
+      select id from agent_documents
+      where shop_id in (select id from shops where user_id = (select auth.uid()))
+    )
+  );
+
+-- Phase 4 (Conversation Engine) — additive columns only, on the two tables
+-- already created in Phase 2. See the Phase 4 architecture review for the
+-- reasoning behind each one; summarized here at the point of use.
+
+-- Structured conversation memory (summary, facts, preferences) — replaces
+-- the single-purpose `summary` column considered earlier; one flexible
+-- JSONB blob instead of multiple narrow columns, same idiom as
+-- module_credentials.credentials. memory_version increments on every write
+-- so a corrupted/hallucinated memory update is at least detectable in logs,
+-- without a full history table nobody needs yet.
+alter table agent_conversations add column if not exists memory jsonb not null default '{}'::jsonb;
+alter table agent_conversations add column if not exists memory_version integer not null default 1;
+
+-- Lifecycle timestamps, distinct from created_at/last_message_at — populated
+-- only when the corresponding status transition actually happens.
+alter table agent_conversations add column if not exists resolved_at timestamptz;
+alter table agent_conversations add column if not exists escalated_at timestamptz;
+
+-- Backs "list this shop's conversations, most recent first" (the Admin
+-- Center, a later phase) with a real index instead of a full scan once the
+-- table grows past a few thousand rows.
+create index if not exists agent_conversations_shop_last_message_idx
+  on agent_conversations (shop_id, last_message_at desc);
+
+-- Analytical scores, queryable/filterable on their own (e.g. "conversations
+-- with a negative sentiment") — kept as dedicated columns rather than
+-- folded into metadata below, same treatment as detected_language/
+-- detected_intent already get.
+alter table agent_messages add column if not exists sentiment_score real;
+alter table agent_messages add column if not exists confidence_score real;
+
+-- Reserves the vision seam without widening ChatMessage.content's type
+-- today: every message is 'text' until a future phase writes 'structured'
+-- (JSON-serialized content parts) into the same `content` column. Existing
+-- code, which only ever reads 'text' messages, needs no change either way.
+alter table agent_messages add column if not exists content_type text not null default 'text'
+  check (content_type in ('text', 'structured'));
+
+-- Technical/observability fields likely to keep growing (provider, model,
+-- latency, token usage, cost, cache, request id, ...) — one JSONB column
+-- rather than a new column per field, so adding one later needs no
+-- migration.
+alter table agent_messages add column if not exists metadata jsonb not null default '{}'::jsonb;
