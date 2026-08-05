@@ -5,7 +5,6 @@ const {
   upsertConversation,
   findConversationById,
   updateConversation,
-  updateMemory,
   insertMessage,
   listRecentMessages,
   emitAgentEvent,
@@ -14,7 +13,6 @@ const {
   upsertConversation: vi.fn(),
   findConversationById: vi.fn(),
   updateConversation: vi.fn(),
-  updateMemory: vi.fn(),
   insertMessage: vi.fn(),
   listRecentMessages: vi.fn(),
   emitAgentEvent: vi.fn(),
@@ -25,7 +23,6 @@ vi.mock("@/lib/agent/conversation/repository", () => ({
   upsertConversation,
   findConversationById,
   updateConversation,
-  updateMemory,
   insertMessage,
   listRecentMessages,
 }));
@@ -36,7 +33,6 @@ import {
   resolveConversation,
   appendMessage,
   transitionConversationStatus,
-  updateConversationMemory,
   getConversation,
   getRecentMessages,
   computeConversationState,
@@ -62,7 +58,6 @@ beforeEach(() => {
   upsertConversation.mockReset();
   findConversationById.mockReset();
   updateConversation.mockReset();
-  updateMemory.mockReset();
   insertMessage.mockReset();
   listRecentMessages.mockReset();
   emitAgentEvent.mockReset().mockResolvedValue(undefined);
@@ -186,57 +181,6 @@ describe("transitionConversationStatus", () => {
     const patch = updateConversation.mock.calls[0][1];
     expect(patch).toEqual({ status: "open" });
     expect(emitAgentEvent).not.toHaveBeenCalled();
-  });
-});
-
-describe("updateConversationMemory", () => {
-  it("passes the current memory to the updater and persists what it returns", async () => {
-    findConversationById.mockResolvedValue(conversation);
-    updateMemory.mockResolvedValue({ ...conversation, memory: { version: 2, summary: "new summary" } });
-
-    const updater = vi.fn((current: typeof conversation.memory) => ({ summary: "new summary" }));
-    const result = await updateConversationMemory(1, updater);
-
-    expect(updater).toHaveBeenCalledWith(conversation.memory);
-    expect(updateMemory).toHaveBeenCalledWith(1, { summary: "new summary" }, 1);
-    expect(result.memory.summary).toBe("new summary");
-  });
-
-  it("re-reads the current state and re-applies the updater on a version conflict, instead of failing immediately", async () => {
-    const conflictedMemory = { version: 2, summary: "someone else's update" };
-    findConversationById
-      .mockResolvedValueOnce(conversation)
-      .mockResolvedValueOnce({ ...conversation, memory: conflictedMemory });
-    updateMemory
-      .mockResolvedValueOnce(null) // first attempt: version conflict
-      .mockResolvedValueOnce({ ...conversation, memory: { version: 3, summary: "retried" } });
-
-    const updater = vi.fn(() => ({ summary: "retried" }));
-    const result = await updateConversationMemory(1, updater);
-
-    expect(updater).toHaveBeenCalledTimes(2);
-    expect(updater).toHaveBeenNthCalledWith(2, conflictedMemory);
-    expect(updateMemory).toHaveBeenNthCalledWith(2, 1, { summary: "retried" }, 2);
-    expect(result.memory.summary).toBe("retried");
-  });
-
-  it("throws after exhausting all retry attempts under sustained conflict", async () => {
-    findConversationById.mockResolvedValue(conversation);
-    updateMemory.mockResolvedValue(null);
-
-    await expect(updateConversationMemory(1, () => ({ summary: "x" }))).rejects.toThrow(
-      "too many concurrent writes"
-    );
-    expect(updateMemory).toHaveBeenCalledTimes(3);
-  });
-
-  it("throws immediately when the conversation does not exist", async () => {
-    findConversationById.mockResolvedValue(null);
-
-    await expect(updateConversationMemory(999, () => ({ summary: "x" }))).rejects.toThrow(
-      "conversation 999 does not exist"
-    );
-    expect(updateMemory).not.toHaveBeenCalled();
   });
 });
 

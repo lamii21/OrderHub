@@ -4,13 +4,18 @@ import {
   insertMessage,
   listRecentMessages,
   updateConversation,
-  updateMemory,
   upsertConversation,
   type InsertMessageInput,
   type UpsertConversationInput,
 } from "./repository";
 import { emitAgentEvent } from "../events";
-import type { AgentConversation, AgentMessage, ConversationMemory, ConversationState, ConversationStatus } from "../types";
+import type { AgentConversation, AgentMessage, ConversationState, ConversationStatus } from "../types";
+
+// Re-exported (not just imported) so lib/agent/index.ts's barrel can carry
+// these two shapes along without ever re-exporting repository.ts itself —
+// a type-only re-export has no runtime import behind it, so this doesn't
+// weaken the "the AI engine never touches repository.ts" boundary.
+export type { InsertMessageInput, UpsertConversationInput };
 
 // Business rules for the conversation domain — every decision about *when*
 // something happens and *what else* changes alongside it lives here, never
@@ -98,42 +103,6 @@ export async function transitionConversationStatus(
   }
 
   return conversation;
-}
-
-const MAX_MEMORY_UPDATE_ATTEMPTS = 3;
-
-// The concurrency control this step exists to provide: `updater` receives
-// the *current* memory (re-read fresh on every attempt, never the caller's
-// possibly-stale copy) and returns the next content: a transformation, not
-// a value. On a version conflict (repository.updateMemory returning null —
-// another write moved the version forward first), this re-reads the new
-// current state and re-applies `updater` to it, rather than overwriting
-// whatever the concurrent write just committed. Gives up after
-// MAX_MEMORY_UPDATE_ATTEMPTS — the same bounded-retry posture already used
-// by lib/platforms/retry.ts's fetchWithRetry, applied here to a database
-// conflict instead of an HTTP 429.
-export async function updateConversationMemory(
-  conversationId: number,
-  updater: (current: ConversationMemory) => Omit<ConversationMemory, "version">
-): Promise<AgentConversation> {
-  for (let attempt = 0; attempt < MAX_MEMORY_UPDATE_ATTEMPTS; attempt++) {
-    const current = await findConversationById(conversationId);
-
-    if (!current) {
-      throw new Error(`Cannot update memory: conversation ${conversationId} does not exist.`);
-    }
-
-    const nextContent = updater(current.memory);
-    const updated = await updateMemory(conversationId, nextContent, current.memory.version);
-
-    if (updated) {
-      return updated;
-    }
-  }
-
-  throw new Error(
-    `Could not update memory for conversation ${conversationId} after ${MAX_MEMORY_UPDATE_ATTEMPTS} attempts — too many concurrent writes.`
-  );
 }
 
 // Pure facades over repository.ts's reads — the AI engine (a later phase)
