@@ -17,6 +17,7 @@ import {
   updateMemory,
   insertMessage,
   listRecentMessages,
+  countMessages,
 } from "@/lib/agent/conversation/repository";
 
 const conversationRow = {
@@ -357,5 +358,36 @@ describe("listRecentMessages", () => {
     holder.client = client;
 
     await expect(listRecentMessages(1, 20)).rejects.toThrow("db down");
+  });
+});
+
+describe("countMessages", () => {
+  it("returns the count reported by the query", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { agent_messages: { data: null, error: null, count: 12 } },
+    });
+    holder.client = client;
+
+    await expect(countMessages(1)).resolves.toBe(12);
+    expect(builders.agent_messages[0].select).toHaveBeenCalledWith("*", { count: "exact", head: true });
+    expect(builders.agent_messages[0].eq).toHaveBeenCalledWith("conversation_id", 1);
+  });
+
+  it("returns 0 rather than null when count comes back empty", async () => {
+    const { client } = createMockSupabase({
+      responses: { agent_messages: { data: null, error: null, count: null } },
+    });
+    holder.client = client;
+
+    await expect(countMessages(1)).resolves.toBe(0);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockSupabase({
+      responses: { agent_messages: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(countMessages(1)).rejects.toThrow("db down");
   });
 });

@@ -88,7 +88,31 @@ export type MessageMetadata = {
   latency_ms?: number;
   token_usage?: ChatUsage;
   finish_reason?: ChatFinishReason;
+  // Present only on a message that resolved after one or more tool
+  // round-trips (Phase 5 Étape 8) — the full trail of what was called and
+  // with what result, attached to the one persisted row the turn actually
+  // produced. The intermediate tool-call/tool-result exchange itself is
+  // never persisted as its own agent_messages row (see engine/provider-loop.ts's
+  // own comment on why); this field is what keeps that exchange auditable
+  // without needing one.
+  tool_calls?: AgentToolCall[];
   [key: string]: unknown;
+};
+
+// A domain-level record of one tool call's lifecycle, distinct from
+// lib/ai's ChatToolCall (which only ever carries what the provider
+// returned — id/name/arguments, nothing about execution). Lives here,
+// alongside MessageMetadata rather than in engine/types.ts (its original
+// home before Étape 8), because MessageMetadata now embeds it directly —
+// engine/types.ts imports from this file, not the other way around, so
+// putting it there first would have been a circular import.
+export type AgentToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "pending" | "succeeded" | "failed";
+  result?: unknown;
+  error?: string;
 };
 
 // Computed, never persisted as its own row — assembled from an
@@ -132,6 +156,26 @@ export type AgentConversation = {
   last_message_at: string;
   resolved_at: string | null;
   escalated_at: string | null;
+};
+
+// Mirrors the ai_agents table (Phase 2) — one row per shop's agent
+// configuration. Named AiAgentConfig, not AgentConfig, to stay visually
+// distinct from the agent_* prefixed entities below (AgentConversation,
+// AgentMessage) even though both families live in this same file; the two
+// naming patterns come from two differently-prefixed tables (ai_agents vs
+// agent_conversations/agent_messages), not from any inconsistency here.
+// No repository/service reads this yet — that arrives once something
+// actually needs to (the engine's context assembly) — this is only the
+// shape that reading will return.
+export type AiAgentConfig = {
+  shop_id: number;
+  is_active: boolean;
+  system_prompt: string | null;
+  tone: string;
+  languages: string[];
+  ai_provider: string;
+  ai_model: string | null;
+  enabled_tools: string[];
 };
 
 export type AgentMessage = {

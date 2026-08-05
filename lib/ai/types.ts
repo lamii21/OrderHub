@@ -20,11 +20,18 @@ export type ChatMessage = {
   role: ChatRole;
   content: string;
   // Present only on a "tool" role message — which tool call this message is
-  // the result of. Unused until Tool Calling (a later phase); included in
-  // the type now so ChatMessage's shape never needs a breaking change when
-  // that phase arrives — see the Phase 3 analysis on why this is safe to
-  // add now but not to leave out.
+  // the result of.
   toolCallId?: string;
+  // Present only on an "assistant" role message that itself requested one
+  // or more tool calls — required to replay that request back to the
+  // provider alongside the "tool" role messages answering it (an
+  // OpenAI-compatible API needs the original tool_calls in the message
+  // history to know what a later tool_call_id is responding to). Added
+  // once Tool Calling (Phase 5 Étape 8) actually needed it — see that
+  // phase's analysis for the concrete gap this closes in
+  // providers/openrouter.ts, which parsed ChatResult.toolCalls on the way
+  // in but never serialized this field on the way back out.
+  toolCalls?: ChatToolCall[];
 };
 
 // JSON Schema, the shape every major provider's function/tool calling

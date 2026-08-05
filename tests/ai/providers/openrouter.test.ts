@@ -96,6 +96,33 @@ describe("openrouterProvider.chat — request shape", () => {
     expect(body.messages[0]).not.toHaveProperty("tool_call_id");
     expect(body.messages[1].tool_call_id).toBe("call_1");
   });
+
+  it("serializes an assistant message's toolCalls back into the request, arguments re-encoded as a JSON string", async () => {
+    const fetchMock = mockFetchSequence([{ json: async () => ({ choices: [{ message: { content: "ok" } }] }) }]);
+
+    await openrouterProvider.chat(credentials, [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "call_1", name: "check_stock", arguments: { productId: 42 } }],
+      },
+      { role: "tool", content: "12 in stock", toolCallId: "call_1" },
+    ]);
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.messages[0].tool_calls).toEqual([
+      { id: "call_1", type: "function", function: { name: "check_stock", arguments: '{"productId":42}' } },
+    ]);
+  });
+
+  it("omits tool_calls entirely on a message that didn't request any", async () => {
+    const fetchMock = mockFetchSequence([{ json: async () => ({ choices: [{ message: { content: "ok" } }] }) }]);
+
+    await openrouterProvider.chat(credentials, messages);
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.messages[0]).not.toHaveProperty("tool_calls");
+  });
 });
 
 describe("openrouterProvider.chat — response parsing", () => {

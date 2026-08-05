@@ -103,6 +103,40 @@ describe("onAgentEvent / emitAgentEvent", () => {
     expect(handler).toHaveBeenCalledWith({ conversation, message });
   });
 
+  it("emits conversation.started with just the conversation", async () => {
+    const handler = vi.fn();
+    onAgentEvent("conversation.started", handler);
+
+    await emitAgentEvent("conversation.started", { conversation });
+
+    expect(handler).toHaveBeenCalledWith({ conversation });
+  });
+
+  it("emits conversation.responded and conversation.completed as two independent subscriptions", async () => {
+    const responded = vi.fn();
+    const completed = vi.fn();
+    onAgentEvent("conversation.responded", responded);
+    onAgentEvent("conversation.completed", completed);
+    const message = {
+      id: 1,
+      conversation_id: conversation.id,
+      role: "assistant" as const,
+      content: "Wah, kayn 3 modèles.",
+      content_type: "text" as const,
+      detected_language: null,
+      detected_intent: null,
+      sentiment_score: null,
+      confidence_score: null,
+      metadata: {},
+      created_at: "2026-08-04T00:00:00.000Z",
+    };
+
+    await emitAgentEvent("conversation.responded", { conversation, message });
+
+    expect(responded).toHaveBeenCalledWith({ conversation, message });
+    expect(completed).not.toHaveBeenCalled();
+  });
+
   it("__resetAgentEventHandlers clears every subscriber, including across event types", async () => {
     const handler = vi.fn();
     onAgentEvent("conversation.resolved", handler);

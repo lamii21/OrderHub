@@ -1,4 +1,5 @@
 import {
+  countMessages as countMessagesInRepository,
   findConversationById,
   insertConversationIfNew,
   insertMessage,
@@ -62,8 +63,14 @@ export async function resolveConversation(input: UpsertConversationInput): Promi
 // Appends one message and keeps last_message_at consistent with it in the
 // same operation — a caller can never persist a message without the
 // conversation's own "most recently active" marker also moving, which is
-// what the (shop_id, last_message_at) index exists to sort by.
-export async function appendMessage(input: InsertMessageInput): Promise<AgentMessage> {
+// what the (shop_id, last_message_at) index exists to sort by. Returns
+// both the message and its conversation — the conversation was always
+// computed here (for the event below), just not returned before; the
+// engine's own persistence step (a later addition) needs both to produce
+// an AgentResponse without a second round trip.
+export async function appendMessage(
+  input: InsertMessageInput
+): Promise<{ conversation: AgentConversation; message: AgentMessage }> {
   assertValidMessageContent(input.content);
 
   const message = await insertMessage(input);
@@ -73,7 +80,7 @@ export async function appendMessage(input: InsertMessageInput): Promise<AgentMes
 
   await emitAgentEvent("conversation.message_received", { conversation, message });
 
-  return message;
+  return { conversation, message };
 }
 
 // Centralizes which fields change together for a given status — resolving
@@ -109,13 +116,17 @@ export async function transitionConversationStatus(
 // must never import repository.ts directly (this project's own rule for
 // this subsystem), so every read it needs is exposed here too, not just
 // the writes. Delegation only: there is no business rule to add to a plain
-// read by id or by recency.
+// read by id, by recency, or by count.
 export async function getConversation(conversationId: number): Promise<AgentConversation | null> {
   return findConversationById(conversationId);
 }
 
 export async function getRecentMessages(conversationId: number, limit: number): Promise<AgentMessage[]> {
   return listRecentMessages(conversationId, limit);
+}
+
+export async function countMessages(conversationId: number): Promise<number> {
+  return countMessagesInRepository(conversationId);
 }
 
 // Computed, never persisted — turns an already-loaded conversation and its

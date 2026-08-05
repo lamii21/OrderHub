@@ -262,6 +262,25 @@ export async function insertMessage(input: InsertMessageInput): Promise<AgentMes
   return mapRowToMessage(data);
 }
 
+// A plain count, head: true so Postgres never has to materialize any rows
+// just to answer "how many" — this is summary/service.ts's (a later
+// module's) only source of truth for whether a conversation has crossed its
+// next summarization checkpoint; there is no message_count column to read
+// instead (supabase/schema.sql was already finalized before this need
+// existed), so a real COUNT() runs once per turn.
+export async function countMessages(conversationId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("agent_messages")
+    .select("*", { count: "exact", head: true })
+    .eq("conversation_id", conversationId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return count ?? 0;
+}
+
 // Returns oldest-first (natural reading order) — the query itself has to
 // fetch newest-first to LIMIT correctly to "the last N", so the result is
 // reversed once, in memory, before it ever reaches a caller. Every future

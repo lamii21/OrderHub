@@ -35,6 +35,7 @@ type OpenRouterMessage = {
   role: string;
   content: string;
   tool_call_id?: string;
+  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
 };
 
 type OpenRouterTool = {
@@ -88,6 +89,14 @@ function toOpenRouterTool(tool: ChatTool): OpenRouterTool {
   };
 }
 
+// The outgoing mirror of parseToolCallArguments below: OpenRouter (like the
+// OpenAI-compatible providers it fronts) expects a requested call's
+// arguments serialized back to a JSON *string* on the way out, the same
+// shape it sent them as a string on the way in.
+function toOpenRouterToolCall(call: ChatToolCall): { id: string; type: "function"; function: { name: string; arguments: string } } {
+  return { id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } };
+}
+
 // OpenRouter (like the underlying OpenAI-compatible providers it fronts)
 // returns tool call arguments as a JSON *string*, not a parsed object —
 // tolerated leniently rather than letting a malformed string from a
@@ -130,6 +139,9 @@ async function chat(
       role: message.role,
       content: message.content,
       ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+      ...(message.toolCalls && message.toolCalls.length > 0
+        ? { tool_calls: message.toolCalls.map(toOpenRouterToolCall) }
+        : {}),
     })),
     ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options?.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),

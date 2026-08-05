@@ -7,6 +7,7 @@ const {
   updateConversation,
   insertMessage,
   listRecentMessages,
+  countMessages,
   emitAgentEvent,
 } = vi.hoisted(() => ({
   insertConversationIfNew: vi.fn(),
@@ -15,6 +16,7 @@ const {
   updateConversation: vi.fn(),
   insertMessage: vi.fn(),
   listRecentMessages: vi.fn(),
+  countMessages: vi.fn(),
   emitAgentEvent: vi.fn(),
 }));
 
@@ -25,6 +27,7 @@ vi.mock("@/lib/agent/conversation/repository", () => ({
   updateConversation,
   insertMessage,
   listRecentMessages,
+  countMessages,
 }));
 
 vi.mock("@/lib/agent/events", () => ({ emitAgentEvent }));
@@ -35,6 +38,7 @@ import {
   transitionConversationStatus,
   getConversation,
   getRecentMessages,
+  countMessages as countConversationMessages,
   computeConversationState,
 } from "@/lib/agent/conversation/service";
 import type { AgentConversation, AgentMessage } from "@/lib/agent/types";
@@ -60,6 +64,7 @@ beforeEach(() => {
   updateConversation.mockReset();
   insertMessage.mockReset();
   listRecentMessages.mockReset();
+  countMessages.mockReset();
   emitAgentEvent.mockReset().mockResolvedValue(undefined);
 });
 
@@ -121,7 +126,8 @@ describe("appendMessage", () => {
 
     const result = await appendMessage({ conversation_id: 1, role: "user", content: "wach kayn had produit?" });
 
-    expect(result).toBe(message);
+    expect(result.message).toBe(message);
+    expect(result.conversation).toEqual({ ...conversation, last_message_at: message.created_at });
     expect(updateConversation).toHaveBeenCalledWith(1, { last_message_at: message.created_at });
     expect(emitAgentEvent).toHaveBeenCalledWith("conversation.message_received", {
       conversation: { ...conversation, last_message_at: message.created_at },
@@ -195,6 +201,12 @@ describe("getConversation / getRecentMessages", () => {
     listRecentMessages.mockResolvedValue([]);
     await expect(getRecentMessages(1, 20)).resolves.toEqual([]);
     expect(listRecentMessages).toHaveBeenCalledWith(1, 20);
+  });
+
+  it("countMessages delegates directly to the repository", async () => {
+    countMessages.mockResolvedValue(10);
+    await expect(countConversationMessages(1)).resolves.toBe(10);
+    expect(countMessages).toHaveBeenCalledWith(1);
   });
 });
 

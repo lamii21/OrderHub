@@ -21,6 +21,9 @@ export const AGENT_EVENT_TYPES = [
   "conversation.escalated",
   "conversation.sentiment_negative",
   "conversation.abandoned",
+  "conversation.started",
+  "conversation.responded",
+  "conversation.completed",
 ] as const;
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number];
@@ -37,6 +40,21 @@ export type AgentEventPayloadMap = {
   "conversation.escalated": { conversation: AgentConversation };
   "conversation.sentiment_negative": { conversation: AgentConversation; message: AgentMessage };
   "conversation.abandoned": { conversation: AgentConversation };
+  // The engine's own lifecycle (lib/agent/engine/execute.ts), distinct from
+  // the conversation-domain events above even though "started"/"responded"
+  // carry the same shape as "message_received" today. "responded" and
+  // "completed" share one payload shape for now (Phase 5 has no Tool
+  // Calling yet, so one turn produces exactly one persisted reply), but stay
+  // two separate event types because that stops being true once Tool
+  // Calling (a later phase) exists: "responded" will fire once per
+  // persisted reply within a turn (there may be intermediate ones around
+  // tool round-trips), "completed" exactly once, when the whole turn is
+  // done. Deliberately excludes latency_ms or any other observability data
+  // — that already lives on message.metadata, and these events stay about
+  // what happened in the domain, not how long it took.
+  "conversation.started": { conversation: AgentConversation };
+  "conversation.responded": { conversation: AgentConversation; message: AgentMessage };
+  "conversation.completed": { conversation: AgentConversation; message: AgentMessage };
 };
 
 export type AgentEventPayload<T extends AgentEventType = AgentEventType> = AgentEventPayloadMap[T];
