@@ -31,6 +31,7 @@ export type MockQueryBuilder = {
   in: MockFn;
   is: MockFn;
   not: MockFn;
+  ilike: MockFn;
   order: MockFn;
   limit: MockFn;
   range: MockFn;
@@ -83,6 +84,7 @@ function makeBuilder(table: string, queue: QueryResult[], index: { n: number }):
     "in",
     "is",
     "not",
+    "ilike",
     "order",
     "limit",
     "range",

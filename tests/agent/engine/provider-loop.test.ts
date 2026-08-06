@@ -132,7 +132,7 @@ describe("runProviderLoop — with tool calls", () => {
 
     const { result, toolCalls } = await runProviderLoop(context, initialMessages);
 
-    expect(dispatchToolCall).toHaveBeenCalledWith(toolCall, { shop_id: 15, conversation_id: 1 });
+    expect(dispatchToolCall).toHaveBeenCalledWith(toolCall, { shop_id: 15, conversation_id: 1, customer_id: null });
     expect(chat).toHaveBeenCalledTimes(2);
 
     const secondCallMessages = chat.mock.calls[1][1];
@@ -146,6 +146,36 @@ describe("runProviderLoop — with tool calls", () => {
     expect(toolCalls).toEqual([
       { id: "call_1", name: "check_stock", arguments: { productId: 42 }, status: "succeeded", result: { inStock: 12 } },
     ]);
+  });
+
+  it("resolves customer_id from the conversation itself, not from any argument the model supplies", async () => {
+    const contextWithCustomer: AgentExecutionContext = {
+      ...context,
+      conversation_context: {
+        ...context.conversation_context,
+        conversation: { ...context.conversation_context.conversation, customer_id: 42 },
+      },
+    };
+    chat
+      .mockResolvedValueOnce({
+        content: null,
+        provider: "openrouter",
+        model: "test-model",
+        finishReason: "tool_calls",
+        toolCalls: [toolCall],
+      })
+      .mockResolvedValueOnce(finalResult);
+    dispatchToolCall.mockResolvedValue({
+      id: "call_1",
+      name: "check_stock",
+      arguments: { productId: 42 },
+      status: "succeeded",
+      result: { inStock: 12 },
+    });
+
+    await runProviderLoop(contextWithCustomer, initialMessages);
+
+    expect(dispatchToolCall).toHaveBeenCalledWith(toolCall, { shop_id: 15, conversation_id: 1, customer_id: 42 });
   });
 
   it("feeds a failed dispatch back to the model as a tool result instead of throwing", async () => {

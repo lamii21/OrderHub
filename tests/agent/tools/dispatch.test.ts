@@ -6,7 +6,7 @@ vi.mock("@/lib/agent/tools/registry", () => ({ getTool }));
 
 import { dispatchToolCall } from "@/lib/agent/tools/dispatch";
 
-const context = { shop_id: 15, conversation_id: 1 };
+const context = { shop_id: 15, conversation_id: 1, customer_id: 42 };
 const call = { id: "call_1", name: "check_stock", arguments: { productId: 42 } };
 
 beforeEach(() => {

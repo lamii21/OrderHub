@@ -10,6 +10,15 @@
 export type ToolExecutionContext = {
   shop_id: number;
   conversation_id: number;
+  // Resolved once per turn from the conversation itself
+  // (AgentConversation.customer_id, Phase 4), never from a tool call's own
+  // arguments — a model-supplied customer id would be untrusted input a
+  // malicious or confused conversation could use to read another
+  // customer's data. null when the conversation isn't linked to an
+  // identified customer yet; a tool that needs one must handle that case
+  // itself (e.g. by declining to answer) rather than falling back to an
+  // unscoped, shop-wide query.
+  customer_id: number | null;
 };
 
 export interface ToolDefinition {

@@ -41,6 +41,10 @@ export async function runProviderLoop(
   const toolExecutionContext = {
     shop_id: context.conversation_context.shop.id,
     conversation_id: context.conversation_context.conversation.id,
+    // Already loaded as part of the conversation itself (Phase 4) — no
+    // extra read needed to resolve "which customer" for every tool call
+    // this turn makes.
+    customer_id: context.conversation_context.conversation.customer_id,
   };
 
   let messages = initialMessages;

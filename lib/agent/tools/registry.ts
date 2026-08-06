@@ -1,16 +1,20 @@
 import type { ChatTool } from "@/lib/ai";
+import { getOrderStatusTool } from "./orders/tool";
+import { searchProductsTool } from "./products/tool";
+import { checkPromoCodeTool } from "./promo-codes/tool";
 import type { ToolDefinition } from "./types";
 
 // Same registry-of-named-modules shape as lib/ai/index.ts's chatProviders/
-// embeddingProviders and lib/platforms/index.ts's connector registry. Empty
-// today — no business tool has been specified or validated yet (Phase 5
-// Étape 8 ships the mechanism only; RAG/product-search tools in particular
-// are blocked on lib/ai's EmbeddingProvider, which has no concrete
-// implementation yet either). getEnabledTools already resolving real names
-// against a real registry — tested with a fake tool — is what makes adding
-// the first real one later a pure addition to `tools` below: nothing in
-// this file, dispatch.ts, or the engine's provider loop needs to change.
-const tools: Record<string, ToolDefinition> = {};
+// embeddingProviders and lib/platforms/index.ts's connector registry.
+// get_order_status (Étape 6.1), search_products (Étape 6.2), and
+// check_promo_code (Étape 6.3) are exactly the pure additions the Phase 5
+// Étape 8 comment on this file anticipated: nothing in dispatch.ts or the
+// engine's provider loop needed to change to add any of them.
+const tools: Record<string, ToolDefinition> = {
+  get_order_status: getOrderStatusTool,
+  search_products: searchProductsTool,
+  check_promo_code: checkPromoCodeTool,
+};
 
 export function getTool(name: string): ToolDefinition | null {
   return tools[name] ?? null;
