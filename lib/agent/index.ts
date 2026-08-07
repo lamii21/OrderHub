@@ -19,3 +19,5 @@ export * from "./summary/service";
 export * from "./tools/types";
 export * from "./tools/registry";
 export * from "./engine/provider-loop";
+export * from "./channels/registry";
+export * from "./channels/dispatch";

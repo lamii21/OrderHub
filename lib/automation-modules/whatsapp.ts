@@ -1,18 +1,10 @@
 import { getModuleCredentials } from "./credentials";
 import { renderTemplate } from "./template";
-import { fetchWithTimeout, isTimeoutError } from "./http";
+import { isTimeoutError } from "./http";
+import { sendWhatsAppTextMessage, isWhatsAppCredentials, WhatsAppApiError } from "@/lib/whatsapp-client";
 import type { AutomationModule } from "./types";
 
-const GRAPH_API_BASE = "https://graph.facebook.com/v20.0";
-
 type WhatsAppConfig = { template: string };
-type WhatsAppCredentials = { accessToken: string; phoneNumberId: string };
-
-function isWhatsAppCredentials(value: Record<string, unknown> | null): value is WhatsAppCredentials {
-  return (
-    !!value && typeof value.accessToken === "string" && typeof value.phoneNumberId === "string"
-  );
-}
 
 // Confirms/informs the customer over WhatsApp — sends a plain text message
 // via the WhatsApp Cloud API (Meta's own Business API). Credentials
@@ -48,26 +40,7 @@ export const whatsappModule: AutomationModule = {
     const message = renderTemplate(template, order, context);
 
     try {
-      const response = await fetchWithTimeout(`${GRAPH_API_BASE}/${credentials.phoneNumberId}/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${credentials.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to: order.customer_phone,
-          type: "text",
-          text: { body: message },
-        }),
-      });
-
-      if (!response.ok) {
-        return { success: false, message: `WhatsApp API request failed (HTTP ${response.status}).` };
-      }
-
-      const body = (await response.json()) as { messages?: { id: string }[] };
-      const messageId = body.messages?.[0]?.id;
+      const { messageId } = await sendWhatsAppTextMessage(credentials, order.customer_phone, message);
 
       return {
         success: true,
@@ -76,6 +49,11 @@ export const whatsappModule: AutomationModule = {
       };
     } catch (err) {
       console.error("whatsappModule: request failed:", err);
+
+      if (err instanceof WhatsAppApiError) {
+        return { success: false, message: err.message };
+      }
+
       return {
         success: false,
         message: isTimeoutError(err)
