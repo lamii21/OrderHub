@@ -47,7 +47,9 @@ export async function getCustomerContext(customerId: number): Promise<Conversati
 export async function getAgentConfig(shopId: number): Promise<AiAgentConfig | null> {
   const { data, error } = await supabase
     .from("ai_agents")
-    .select("shop_id, is_active, system_prompt, tone, languages, ai_provider, ai_model, enabled_tools")
+    .select(
+      "shop_id, is_active, system_prompt, tone, languages, ai_provider, ai_model, enabled_tools, rag_enabled, rag_top_k"
+    )
     .eq("shop_id", shopId)
     .maybeSingle();
 

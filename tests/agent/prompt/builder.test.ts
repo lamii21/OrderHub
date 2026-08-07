@@ -32,9 +32,12 @@ function baseContext(overrides: Partial<AgentExecutionContext> = {}): AgentExecu
       ai_provider: "openrouter",
       ai_model: "test-model",
       enabled_tools: [],
+      rag_enabled: false,
+      rag_top_k: null,
     },
     credentials: { apiKey: "test-key", model: "test-model" },
     options: {},
+    retrieved_context: [],
     ...overrides,
   };
 }
@@ -121,6 +124,33 @@ describe("buildSystemPrompt", () => {
     context.conversation_context.conversation.memory = { version: 2, summary: "x", facts: { a: 1 } };
 
     expect(buildSystemPrompt(context)).toBe(buildSystemPrompt(context));
+  });
+
+  it("includes retrieved chunks, attributed by title and document type, when any are present", () => {
+    const context = baseContext();
+    context.retrieved_context = [
+      { document_type: "faq", title: "Livraison", content: "Nous livrons partout au Maroc.", score: 0.9 },
+      { document_type: "policy", title: "Retours", content: "Les retours sont acceptés sous 14 jours.", score: 0.81 },
+    ];
+
+    const prompt = buildSystemPrompt(context);
+
+    expect(prompt).toContain("Relevant information from the shop's knowledge base:");
+    expect(prompt).toContain("- Livraison (faq): Nous livrons partout au Maroc.");
+    expect(prompt).toContain("- Retours (policy): Les retours sont acceptés sous 14 jours.");
+  });
+
+  it("omits the knowledge base section entirely when nothing was retrieved", () => {
+    expect(buildSystemPrompt(baseContext())).not.toContain("knowledge base");
+  });
+
+  it("never mentions score/id fields for a retrieved chunk — only title, type, and content reach the prompt", () => {
+    const context = baseContext();
+    context.retrieved_context = [
+      { document_type: "faq", title: "Livraison", content: "Nous livrons partout au Maroc.", score: 0.9 },
+    ];
+
+    expect(buildSystemPrompt(context)).not.toMatch(/0\.9/);
   });
 });
 

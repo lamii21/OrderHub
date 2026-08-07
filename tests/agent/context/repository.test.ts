@@ -90,6 +90,8 @@ describe("getAgentConfig", () => {
             ai_provider: "openrouter",
             ai_model: "test-model",
             enabled_tools: [],
+            rag_enabled: true,
+            rag_top_k: 8,
           },
           error: null,
         },
@@ -100,6 +102,11 @@ describe("getAgentConfig", () => {
     const result = await getAgentConfig(15);
 
     expect(result?.ai_provider).toBe("openrouter");
+    expect(result?.rag_enabled).toBe(true);
+    expect(result?.rag_top_k).toBe(8);
+    expect(builders.ai_agents[0].select).toHaveBeenCalledWith(
+      "shop_id, is_active, system_prompt, tone, languages, ai_provider, ai_model, enabled_tools, rag_enabled, rag_top_k"
+    );
     expect(builders.ai_agents[0].eq).toHaveBeenCalledWith("shop_id", 15);
   });
 

@@ -42,9 +42,12 @@ const context: AgentExecutionContext = {
     ai_provider: "openrouter",
     ai_model: "test-model",
     enabled_tools: [],
+    rag_enabled: false,
+    rag_top_k: null,
   },
   credentials: { apiKey: "sk-or-test", model: "test-model" },
   options: {},
+  retrieved_context: [],
 };
 
 const initialMessages = [{ role: "system" as const, content: "system prompt" }];

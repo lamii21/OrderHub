@@ -1,5 +1,6 @@
 import type { AiCredentials } from "@/lib/ai";
 import type { AgentConversation, AgentMessage, AiAgentConfig, ConversationContext } from "../types";
+import type { RetrievedChunk } from "../rag/types";
 
 // Contracts only — no logic. What the engine (a later step) will actually
 // do with these shapes is deliberately not decided here; this file exists
@@ -25,11 +26,21 @@ export type AgentRequest = {
 // here says how. `credentials` was added after this type's first version —
 // context assembly originally stopped at agent_config, until building the
 // engine revealed nothing anywhere resolved an actual API key.
+//
+// retrieved_context (Phase 8) is always an array, never undefined/optional
+// — assembleExecutionContext() populates it with [] until the retrieval
+// step (Étape 8.5) actually fills it in, the same way this type never had
+// a partially-optional field for any other concern. No embedding
+// credentials live on this type: the embedding provider/model/API key are
+// a platform-wide config (see supabase/schema.sql's ai_agents comment),
+// resolved directly by whatever calls the retriever, not threaded through
+// per-conversation context the way per-shop chat `credentials` above is.
 export type AgentExecutionContext = {
   conversation_context: ConversationContext;
   agent_config: AiAgentConfig;
   credentials: AiCredentials;
   options: AgentEngineOptions;
+  retrieved_context: RetrievedChunk[];
 };
 
 // What executeConversation() returns once it persists the assistant's

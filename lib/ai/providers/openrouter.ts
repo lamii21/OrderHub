@@ -5,6 +5,7 @@ import {
   AiTimeoutError,
   AiValidationError,
 } from "../errors";
+import { buildAbortSignal } from "../http";
 import type {
   AiCredentials,
   ChatFinishReason,
@@ -110,20 +111,6 @@ function parseToolCallArguments(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-// Combines this call's own timeout with a caller-supplied cancellation
-// signal (ChatOptions.abortSignal) into one signal fetch() can use. Written
-// locally rather than added to lib/automation-modules/http.ts's shared
-// fetchWithTimeout: that helper has no notion of an external signal today,
-// and lib/ai/ is the only caller that needs one so far — same "extract once
-// duplicated, not before" precedent lib/platforms/retry.ts's own comment
-// already documents for this exact situation.
-function buildAbortSignal(timeoutMs: number, external?: AbortSignal): { signal: AbortSignal; clear: () => void } {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = external ? AbortSignal.any([controller.signal, external]) : controller.signal;
-  return { signal, clear: () => clearTimeout(timeout) };
 }
 
 async function chat(

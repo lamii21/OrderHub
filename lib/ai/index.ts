@@ -1,6 +1,7 @@
 import type { ChatProvider, EmbeddingProvider } from "./types";
 import { UnsupportedEmbeddingError } from "./errors";
 import { openrouterProvider } from "./providers/openrouter";
+import { geminiProvider } from "./providers/gemini";
 
 // Two independent registries, not one — this is what actually lets a shop
 // pair "chat via OpenRouter" with "embeddings via a different provider"
@@ -13,9 +14,13 @@ const chatProviders: Record<string, ChatProvider> = {
 };
 
 const embeddingProviders: Record<string, EmbeddingProvider> = {
-  // Populated in the RAG phase, once a concrete embedding provider has
-  // actually been verified against a live account — see the Phase 3
-  // analysis on why none ships yet.
+  // gemini (Phase 8 Étape 8.7) is the first concrete embedding provider —
+  // chosen to match agent_document_chunks.embedding's vector(768) column,
+  // sized for text-embedding-004 since Phase 2, before this provider
+  // existed to fill it. See providers/gemini.ts's own disclosure: built
+  // against Google's published API reference, not yet verified against a
+  // live account.
+  gemini: geminiProvider,
 };
 
 export function getChatProvider(name: string): ChatProvider {

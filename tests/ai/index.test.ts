@@ -13,6 +13,10 @@ describe("getChatProvider", () => {
 });
 
 describe("getEmbeddingProvider", () => {
+  it("resolves a registered embedding provider by name", () => {
+    expect(getEmbeddingProvider("gemini").name).toBe("gemini");
+  });
+
   it("throws UnsupportedEmbeddingError for a name that IS a real chat provider, just not an embedding one", () => {
     expect(() => getEmbeddingProvider("openrouter")).toThrow(UnsupportedEmbeddingError);
   });
@@ -28,7 +32,7 @@ describe("SUPPORTED_CHAT_PROVIDERS / SUPPORTED_EMBEDDING_PROVIDERS", () => {
     expect(SUPPORTED_CHAT_PROVIDERS).toEqual(["openrouter"]);
   });
 
-  it("lists no embedding providers yet — none has been verified against a live account (Phase 3 scope)", () => {
-    expect(SUPPORTED_EMBEDDING_PROVIDERS).toEqual([]);
+  it("lists exactly the registered embedding providers", () => {
+    expect(SUPPORTED_EMBEDDING_PROVIDERS).toEqual(["gemini"]);
   });
 });

@@ -2271,6 +2271,23 @@ create table if not exists ai_agents (
 
 create unique index if not exists ai_agents_shop_id_key on ai_agents (shop_id);
 
+-- Phase 8 (RAG): two per-shop tuning knobs, both nullable-or-defaulted so
+-- every existing row stays valid without a backfill. rag_enabled defaults
+-- false — a shop must opt in, same posture as is_active for the agent
+-- itself; retrieval never becomes "free" background cost for a shop that
+-- never configured any documents. rag_top_k is nullable, not defaulted
+-- here: null means "use the platform-wide default" (a code-level constant,
+-- lib/agent/rag/retriever.ts), not a magic number baked into every row at
+-- creation time — the whole point of this column existing at all is to let
+-- a shop override that default without a code change, not to duplicate it.
+-- The embedding provider/model themselves are deliberately NOT per-shop
+-- columns here: agent_document_chunks.embedding is a single fixed-dimension
+-- vector(768) column shared by every shop, so the model that fills it must
+-- be a platform-wide choice, never one a shop can independently switch —
+-- see the Phase 8 Étape 8.0 architecture analysis for why.
+alter table ai_agents add column if not exists rag_enabled boolean not null default false;
+alter table ai_agents add column if not exists rag_top_k integer;
+
 alter table ai_agents enable row level security;
 
 grant select, insert, update, delete on ai_agents to authenticated;
@@ -2446,6 +2463,45 @@ create index if not exists agent_document_chunks_document_id_idx
 -- as the table grows — the right default for a table with no data yet.
 create index if not exists agent_document_chunks_embedding_idx
   on agent_document_chunks using hnsw (embedding vector_cosine_ops);
+
+-- Phase 8 (RAG) Étape 8.4 — the vector similarity search itself.
+-- PostgREST has no fluent "order by embedding <=> query" query-builder
+-- method, so this lives in an RPC function, same precedent as
+-- decrement_product_stock/get_customer_stats elsewhere in this file.
+-- Filters by shop_id using agent_document_chunks' own denormalized column
+-- (not a join on agent_documents for that part — see this table's own
+-- comment above on why), returning the k nearest neighbours by cosine
+-- distance together with a normalized similarity (1 - distance) a caller
+-- can apply its own relevance threshold against — this function has no
+-- opinion on what counts as "relevant enough", that's
+-- lib/agent/rag/retriever.ts's decision, not a decision embedded in SQL.
+create or replace function match_agent_document_chunks(
+  p_shop_id bigint,
+  p_query_embedding vector(768),
+  p_match_count integer
+)
+returns table (
+  document_id bigint,
+  document_type text,
+  document_title text,
+  content text,
+  similarity double precision
+)
+language sql stable
+as $$
+  select
+    c.document_id,
+    d.type as document_type,
+    d.title as document_title,
+    c.content,
+    1 - (c.embedding <=> p_query_embedding) as similarity
+  from agent_document_chunks c
+  join agent_documents d on d.id = c.document_id
+  where c.shop_id = p_shop_id
+    and c.embedding is not null
+  order by c.embedding <=> p_query_embedding
+  limit p_match_count;
+$$;
 
 alter table agent_document_chunks enable row level security;
 

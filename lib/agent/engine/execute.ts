@@ -4,27 +4,30 @@ import { buildPrompt } from "../prompt/builder";
 import { appendMessage } from "../conversation/service";
 import { emitAgentEvent } from "../events";
 import { maybeSummarizeConversation } from "../summary/service";
+import { retrieveRelevantChunks } from "../rag/retriever";
 import { runProviderLoop } from "./provider-loop";
 import type { AgentEngineOptions, AgentExecutionContext, AgentRequest, AgentResponse } from "./types";
 import type { AgentToolCall, MessageMetadata } from "../types";
+import type { RetrievedChunk } from "../rag/types";
 
 // The engine's own top-level shape, named as a pipeline the way the Phase 5
-// review asked for: loadContext -> ensureAgentCanRun -> buildPrompt ->
-// runProviderLoop -> persistResponse -> publishEvents -> maybeSummarizeConversation.
-// Each step below is a private wrapper even where (like loadContext) it
-// does nothing beyond delegate today — the point is that
-// executeConversation() itself stays readable as this list of names, not
-// that every wrapper is doing complex work yet.
+// review asked for: loadContext -> ensureAgentCanRun -> retrieveContext ->
+// buildPrompt -> runProviderLoop -> persistResponse -> publishEvents ->
+// maybeSummarizeConversation. Each step below is a private wrapper even
+// where (like loadContext) it does nothing beyond delegate today — the
+// point is that executeConversation() itself stays readable as this list
+// of names, not that every wrapper is doing complex work yet.
 //
 // The engine never imports a workflow, a notifier, or anything else that
 // reacts to what it just did — it only calls emitAgentEvent() (the same bus
 // conversation/service.ts already publishes to) and lets whatever is
 // subscribed react. Nothing is subscribed yet; that bridge is a later
-// phase's job, not this one's. maybeSummarizeConversation (lib/agent/summary/)
-// is the one exception to "never call anything but a private wrapper" —
-// it's still not a workflow or a notifier, just this conversation's own
-// memory being kept current, which is why it lives inside lib/agent/ rather
-// than being reached via an event subscriber.
+// phase's job, not this one's. maybeSummarizeConversation
+// (lib/agent/summary/) and retrieveContext (lib/agent/rag/, Étape 8.5) are
+// the two exceptions to "never call anything but a private wrapper" —
+// neither is a workflow or a notifier, just this conversation's own memory
+// or knowledge base being read, which is why both live inside lib/agent/
+// rather than being reached via an event subscriber.
 
 async function loadContext(request: AgentRequest, options: AgentEngineOptions): Promise<AgentExecutionContext> {
   return assembleExecutionContext(request.conversation_id, options);
@@ -34,6 +37,45 @@ function ensureAgentCanRun(context: AgentExecutionContext): void {
   if (!context.agent_config.is_active) {
     throw new Error(`AI agent is not active for shop ${context.conversation_context.shop.id}.`);
   }
+}
+
+// Skipped entirely — never even resolving a query — when the shop hasn't
+// opted in (rag_enabled: false, the default): retrieval has a real cost
+// (an embedding API call, a vector search) on every single turn, not worth
+// paying for a shop that never configured any documents. No try/catch
+// needed here: retrieveRelevantChunks (Étape 8.4) already guarantees it
+// never throws, returning [] for every failure mode itself — this
+// function only adds the one decision that's genuinely the engine's to
+// make (whether to call it at all), never a second layer of error
+// handling around a function that doesn't need one.
+function findLatestUserMessage(context: AgentExecutionContext): string | null {
+  const { recent_messages } = context.conversation_context;
+
+  for (let i = recent_messages.length - 1; i >= 0; i--) {
+    if (recent_messages[i].role === "user") {
+      return recent_messages[i].content;
+    }
+  }
+
+  return null;
+}
+
+async function retrieveContext(context: AgentExecutionContext): Promise<RetrievedChunk[]> {
+  if (!context.agent_config.rag_enabled) {
+    return [];
+  }
+
+  const queryText = findLatestUserMessage(context);
+
+  if (queryText === null) {
+    return [];
+  }
+
+  return retrieveRelevantChunks(
+    context.conversation_context.shop.id,
+    queryText,
+    context.agent_config.rag_top_k ?? undefined
+  );
 }
 
 // Persists the assistant's reply through conversation/service.ts's
@@ -106,15 +148,24 @@ export async function executeConversation(
   // (agent inactive) never counts as "started".
   await emitAgentEvent("conversation.started", { conversation: context.conversation_context.conversation });
 
-  const messages = buildPrompt(context);
+  // A new object, not a mutation of `context` — assembleExecutionContext
+  // already populated retrieved_context: [] as a placeholder (Étape 8.0);
+  // this replaces it with the real result, same "each step produces its
+  // own value" style the rest of this pipeline already follows.
+  const contextWithRetrieval: AgentExecutionContext = {
+    ...context,
+    retrieved_context: await retrieveContext(context),
+  };
+
+  const messages = buildPrompt(contextWithRetrieval);
 
   const startedAt = Date.now();
-  const { result: chatResult, toolCalls } = await runProviderLoop(context, messages);
+  const { result: chatResult, toolCalls } = await runProviderLoop(contextWithRetrieval, messages);
   const latencyMs = Date.now() - startedAt;
 
-  const response = await persistResponse(context, chatResult, latencyMs, toolCalls);
+  const response = await persistResponse(contextWithRetrieval, chatResult, latencyMs, toolCalls);
   await publishEvents(response);
-  await maybeSummarizeConversation(context);
+  await maybeSummarizeConversation(contextWithRetrieval);
 
   return response;
 }

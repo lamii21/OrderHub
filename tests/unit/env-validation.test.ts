@@ -77,6 +77,9 @@ describe("validateEnvironment", () => {
       GOOGLE_SHEETS_TEMPLATE_ID: "id",
       NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "key",
+      RAG_EMBEDDING_PROVIDER: "gemini",
+      RAG_EMBEDDING_MODEL: "text-embedding-004",
+      RAG_EMBEDDING_API_KEY: "key",
     });
     const logSpy = vi.spyOn(console, "log");
 

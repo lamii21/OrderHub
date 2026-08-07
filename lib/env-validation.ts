@@ -28,6 +28,16 @@ const OPTIONAL_ENV_VARS = [
   "GOOGLE_SHEETS_TEMPLATE_ID",
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  // RAG (Phase 8) — a platform-wide embedding provider, never a per-shop
+  // one (see lib/agent/rag/provider-config.ts's own comment on why:
+  // agent_document_chunks.embedding is a single fixed-dimension column,
+  // incompatible with each shop picking its own model). Missing these
+  // doesn't take down anything else — indexing/retrieval simply throws
+  // when actually invoked, same "a whole feature area unavailable, not a
+  // startup failure" posture as the Google vars above.
+  "RAG_EMBEDDING_PROVIDER",
+  "RAG_EMBEDDING_MODEL",
+  "RAG_EMBEDDING_API_KEY",
 ] as const;
 
 export type EnvValidationResult = {

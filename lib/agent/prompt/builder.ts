@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@/lib/ai";
 import type { AgentExecutionContext } from "../engine/types";
 import type { AgentMessage, ConversationMemory } from "../types";
+import type { RetrievedChunk } from "../rag/types";
 
 // A pure function boundary, deliberately: no I/O, no randomness, no
 // wall-clock reads (a "today's date" section would make the same input
@@ -13,6 +14,18 @@ function formatKeyValue(record: Record<string, unknown>): string {
   return Object.entries(record)
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(", ");
+}
+
+// Phase 8 (RAG). Reads context.retrieved_context, already resolved by the
+// engine's own retrieveContext step (Étape 8.5) before buildPrompt ever
+// runs — this stays a pure rendering of an already-decided value, no I/O,
+// same boundary this whole file has kept since Phase 5 Étape 3. No chunk
+// id is rendered (RetrievedChunk never carries one) — title and
+// document_type are what let the model attribute an answer ("according to
+// our return policy") without one.
+function formatRetrievedContext(chunks: RetrievedChunk[]): string {
+  const lines = chunks.map((chunk) => `- ${chunk.title} (${chunk.document_type}): ${chunk.content}`);
+  return `Relevant information from the shop's knowledge base:\n${lines.join("\n")}`;
 }
 
 // Everything the system message can draw on today: the merchant's own
@@ -58,6 +71,10 @@ export function buildSystemPrompt(context: AgentExecutionContext): string {
 
   if (memory.preferences && Object.keys(memory.preferences).length > 0) {
     sections.push(`Customer preferences: ${formatKeyValue(memory.preferences)}`);
+  }
+
+  if (context.retrieved_context.length > 0) {
+    sections.push(formatRetrievedContext(context.retrieved_context));
   }
 
   return sections.join("\n\n");

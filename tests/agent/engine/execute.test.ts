@@ -7,6 +7,7 @@ const {
   appendMessage,
   emitAgentEvent,
   maybeSummarizeConversation,
+  retrieveRelevantChunks,
 } = vi.hoisted(() => ({
   assembleExecutionContext: vi.fn(),
   buildPrompt: vi.fn(),
@@ -14,6 +15,7 @@ const {
   appendMessage: vi.fn(),
   emitAgentEvent: vi.fn(),
   maybeSummarizeConversation: vi.fn(),
+  retrieveRelevantChunks: vi.fn(),
 }));
 
 vi.mock("@/lib/agent/context/service", () => ({ assembleExecutionContext }));
@@ -22,6 +24,7 @@ vi.mock("@/lib/agent/engine/provider-loop", () => ({ runProviderLoop }));
 vi.mock("@/lib/agent/conversation/service", () => ({ appendMessage }));
 vi.mock("@/lib/agent/events", () => ({ emitAgentEvent }));
 vi.mock("@/lib/agent/summary/service", () => ({ maybeSummarizeConversation }));
+vi.mock("@/lib/agent/rag/retriever", () => ({ retrieveRelevantChunks }));
 
 import { executeConversation } from "@/lib/agent/engine/execute";
 import type { AgentExecutionContext } from "@/lib/agent/engine/types";
@@ -55,9 +58,12 @@ const activeContext: AgentExecutionContext = {
     ai_provider: "openrouter",
     ai_model: "test-model",
     enabled_tools: [],
+    rag_enabled: false,
+    rag_top_k: null,
   },
   credentials: { apiKey: "sk-or-test", model: "test-model" },
   options: {},
+  retrieved_context: [],
 };
 
 const chatResult = {
@@ -102,6 +108,7 @@ beforeEach(() => {
   appendMessage.mockReset().mockResolvedValue({ conversation: persistedConversation, message: persistedMessage });
   emitAgentEvent.mockReset().mockResolvedValue(undefined);
   maybeSummarizeConversation.mockReset().mockResolvedValue(undefined);
+  retrieveRelevantChunks.mockReset().mockResolvedValue([]);
 });
 
 describe("executeConversation", () => {
@@ -212,5 +219,90 @@ describe("executeConversation", () => {
     await executeConversation({ conversation_id: 1 });
 
     expect(appendMessage.mock.calls[0][0].metadata.tool_calls).toEqual(toolCalls);
+  });
+});
+
+describe("executeConversation — retrieveContext (Phase 8)", () => {
+  const userMessage: AgentMessage = {
+    id: 50,
+    conversation_id: 1,
+    role: "user",
+    content: "wach 3andkoum stock?",
+    content_type: "text",
+    detected_language: null,
+    detected_intent: null,
+    sentiment_score: null,
+    confidence_score: null,
+    metadata: {},
+    created_at: "2026-08-05T09:59:00.000Z",
+  };
+
+  it("never calls the retriever when rag_enabled is false, and retrieved_context stays empty", async () => {
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      conversation_context: { ...activeContext.conversation_context, recent_messages: [userMessage] },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    expect(retrieveRelevantChunks).not.toHaveBeenCalled();
+    expect(buildPrompt.mock.calls[0][0].retrieved_context).toEqual([]);
+  });
+
+  it("calls the retriever with the shop id, the latest user message, and rag_top_k when rag is enabled", async () => {
+    const chunks = [{ document_type: "faq" as const, title: "Livraison", content: "Nous livrons au Maroc.", score: 0.9 }];
+    retrieveRelevantChunks.mockResolvedValue(chunks);
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      agent_config: { ...activeContext.agent_config, rag_enabled: true, rag_top_k: 8 },
+      conversation_context: { ...activeContext.conversation_context, recent_messages: [userMessage] },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    expect(retrieveRelevantChunks).toHaveBeenCalledWith(15, "wach 3andkoum stock?", 8);
+    expect(buildPrompt.mock.calls[0][0].retrieved_context).toEqual(chunks);
+    expect(runProviderLoop.mock.calls[0][0].retrieved_context).toEqual(chunks);
+  });
+
+  it("passes undefined (not null) for rag_top_k so the retriever's own platform default applies", async () => {
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      agent_config: { ...activeContext.agent_config, rag_enabled: true, rag_top_k: null },
+      conversation_context: { ...activeContext.conversation_context, recent_messages: [userMessage] },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    expect(retrieveRelevantChunks).toHaveBeenCalledWith(15, "wach 3andkoum stock?", undefined);
+  });
+
+  it("never calls the retriever when rag is enabled but there is no user message to search from", async () => {
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      agent_config: { ...activeContext.agent_config, rag_enabled: true },
+      conversation_context: { ...activeContext.conversation_context, recent_messages: [] },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    expect(retrieveRelevantChunks).not.toHaveBeenCalled();
+  });
+
+  it("uses the most recent user message, skipping a trailing non-user message rather than reading the array's last entry blindly", async () => {
+    const olderUserMessage: AgentMessage = { ...userMessage, id: 40, content: "bghit nchouf les produits" };
+    const trailingAssistantMessage: AgentMessage = { ...userMessage, id: 51, role: "assistant", content: "Voici nos produits." };
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      agent_config: { ...activeContext.agent_config, rag_enabled: true },
+      conversation_context: {
+        ...activeContext.conversation_context,
+        recent_messages: [olderUserMessage, userMessage, trailingAssistantMessage],
+      },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    expect(retrieveRelevantChunks).toHaveBeenCalledWith(15, "wach 3andkoum stock?", undefined);
   });
 });

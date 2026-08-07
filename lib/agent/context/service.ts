@@ -55,5 +55,11 @@ export async function assembleExecutionContext(
     agent_config: agentConfig,
     credentials,
     options,
+    // Populated for real by the engine's retrieval step (Phase 8 Étape
+    // 8.5) — assembleExecutionContext() itself has no reason to know
+    // anything about RAG, so this starts empty rather than undefined,
+    // keeping AgentExecutionContext a complete value from the moment it's
+    // constructed.
+    retrieved_context: [],
   };
 }

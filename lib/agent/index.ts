@@ -21,3 +21,7 @@ export * from "./tools/registry";
 export * from "./engine/provider-loop";
 export * from "./channels/registry";
 export * from "./channels/dispatch";
+export * from "./rag/types";
+export * from "./rag/indexing";
+export * from "./rag/retriever";
+export * from "./rag/documents";

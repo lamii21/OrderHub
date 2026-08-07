@@ -176,6 +176,15 @@ export type AiAgentConfig = {
   ai_provider: string;
   ai_model: string | null;
   enabled_tools: string[];
+  // Phase 8 (RAG). Deliberately does NOT include an embedding
+  // provider/model — those are a platform-wide choice (see
+  // supabase/schema.sql's own comment on why), never a per-shop setting
+  // like ai_provider/ai_model above. rag_top_k is null, not defaulted here
+  // in TypeScript either — a null means "use the platform default", read
+  // where retrieval actually happens (lib/agent/rag/retriever.ts), not
+  // duplicated as a second magic number in this type.
+  rag_enabled: boolean;
+  rag_top_k: number | null;
 };
 
 export type AgentMessage = {

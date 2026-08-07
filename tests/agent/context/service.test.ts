@@ -86,6 +86,7 @@ describe("assembleExecutionContext", () => {
       agent_config: agentConfig,
       credentials,
       options: {},
+      retrieved_context: [],
     });
     expect(getCustomerContext).toHaveBeenCalledWith(42);
   });
