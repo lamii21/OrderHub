@@ -9,7 +9,7 @@ import {
 } from "@/lib/ai/errors";
 import { mockFetchSequence } from "../../mocks/fetch";
 
-const credentials = { apiKey: "test-google-key", model: "text-embedding-004" };
+const credentials = { apiKey: "test-google-key", model: "gemini-embedding-2" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -29,26 +29,37 @@ describe("geminiProvider.capabilities", () => {
 });
 
 describe("geminiProvider.embed — request shape", () => {
-  it("sends the model, content, and API key in the URL", async () => {
+  it("sends the model, content, API key, and output_dimensionality", async () => {
     const fetchMock = mockFetchSequence([{ json: async () => ({ embedding: { values: [0.1, 0.2, 0.3] } }) }]);
 
     await geminiProvider.embed(credentials, "Nous livrons partout au Maroc.");
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=test-google-key"
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=test-google-key"
     );
     const body = JSON.parse(init.body as string);
     expect(body).toEqual({
-      model: "models/text-embedding-004",
+      model: "models/gemini-embedding-2",
       content: { parts: [{ text: "Nous livrons partout au Maroc." }] },
+      output_dimensionality: 768,
     });
+  });
+
+  it("always requests 768 dimensions, matching agent_document_chunks.embedding's vector(768) column", async () => {
+    const fetchMock = mockFetchSequence([{ json: async () => ({ embedding: { values: [0.1] } }) }]);
+
+    await geminiProvider.embed(credentials, "hi");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.output_dimensionality).toBe(768);
   });
 
   it("URL-encodes the API key", async () => {
     const fetchMock = mockFetchSequence([{ json: async () => ({ embedding: { values: [0.1] } }) }]);
 
-    await geminiProvider.embed({ apiKey: "key with spaces", model: "text-embedding-004" }, "hi");
+    await geminiProvider.embed({ apiKey: "key with spaces", model: "gemini-embedding-2" }, "hi");
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toContain("key=key%20with%20spaces");
@@ -61,7 +72,7 @@ describe("geminiProvider.embed — response parsing", () => {
 
     const result = await geminiProvider.embed(credentials, "hi");
 
-    expect(result).toEqual({ embedding: [0.1, 0.2, 0.3], model: "text-embedding-004" });
+    expect(result).toEqual({ embedding: [0.1, 0.2, 0.3], model: "gemini-embedding-2" });
   });
 
   it("throws AiProviderError when the response has no embedding at all", async () => {

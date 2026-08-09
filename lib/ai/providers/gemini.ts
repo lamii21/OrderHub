@@ -3,17 +3,29 @@ import { buildAbortSignal } from "../http";
 import type { AiCredentials, EmbeddingProvider, EmbeddingResult } from "../types";
 
 // UNVERIFIED AGAINST A LIVE GOOGLE AI ACCOUNT — built against Google's
-// published Generative Language API reference for embedContent, never
-// actually exercised against a real key in this session. Same disclosure
-// precedent as lib/platforms/youcan.ts, lib/automation-modules/payment-link.ts,
-// and lib/ai/providers/openrouter.ts elsewhere in this project.
+// published Generative Language API reference for embedContent. A real
+// call was made against a live key with the previous model
+// (text-embedding-004) and failed with HTTP 404 — Google retired that
+// model on 2026-01-14. This file now targets gemini-embedding-2, its
+// documented replacement, but that has not itself been exercised
+// successfully against a live key yet. Same disclosure precedent as
+// lib/platforms/youcan.ts, lib/automation-modules/payment-link.ts, and
+// lib/ai/providers/openrouter.ts elsewhere in this project.
 //
 // The concrete embedding provider chosen for Phase 8's RAG — not an
 // arbitrary pick: supabase/schema.sql's agent_document_chunks.embedding
-// column is a vector(768), a dimension already sized for exactly this
-// model (text-embedding-004) since Phase 2, before this provider existed
-// to fill it.
+// column is a vector(768), a single fixed dimension shared by every shop.
+// gemini-embedding-2 defaults to 3072 dimensions, so every call explicitly
+// requests output_dimensionality: 768 below — unlike the older
+// gemini-embedding-001, gemini-embedding-2 auto-normalizes a truncated
+// output, so no extra normalization step is needed here to keep the
+// resulting vector meaningful for cosine similarity.
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+// Matches agent_document_chunks.embedding's vector(768) column exactly —
+// see the disclosure comment above for why this must be requested
+// explicitly rather than left at gemini-embedding-2's own 3072 default.
+const OUTPUT_DIMENSIONALITY = 768;
 
 // Same reasoning as openrouter.ts's own TIMEOUT_MS: longer than the
 // 10-15s timeouts used for plain REST calls elsewhere in this project,
@@ -22,6 +34,12 @@ const TIMEOUT_MS = 30_000;
 
 const PROVIDER_NAME = "gemini";
 
+// embedContent's REST response wraps the embedding in a singular
+// `embedding` object — confirmed against a live call (Phase 10 Étape
+// 10.0.e diagnostic); the `embeddings` (plural array) shape shown in
+// Google's own SDK code samples belongs to the client library's own
+// abstraction (which also fronts the separate batchEmbedContents
+// endpoint), not to this raw REST contract.
 type GeminiEmbedResponse = {
   embedding?: { values?: number[] };
 };
@@ -48,6 +66,7 @@ async function embed(
       body: JSON.stringify({
         model: modelPath,
         content: { parts: [{ text }] },
+        output_dimensionality: OUTPUT_DIMENSIONALITY,
       }),
       signal,
     });
