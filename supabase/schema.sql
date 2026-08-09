@@ -2398,6 +2398,21 @@ create table if not exists agent_documents (
 
 create index if not exists agent_documents_shop_id_idx on agent_documents (shop_id);
 
+-- Phase 9 (merchant Knowledge Base UI) Étape 9.0 — the one indicator of
+-- indexing status this scope calls for: the timestamp of the last
+-- successful indexing pass (lib/agent/rag/indexing.ts's indexDocument()),
+-- stamped after a document's chunks were successfully replaced — including
+-- when that document is empty and correctly produces zero chunks, which is
+-- still a completed pass, not a failure. null means "never indexed".
+-- Deliberately not a richer indexing_status/indexing_error/job-queue
+-- system: nothing in this project's scope needs one yet, and a null vs.
+-- stale timestamp already tells a merchant everything Étape 9's UI needs
+-- to show — a failed attempt simply leaves this column at its previous
+-- value rather than recording why, same "don't build the richer version
+-- until something needs it" posture already applied throughout this
+-- project (e.g. Phase 6's deferred promo code redemption tracking).
+alter table agent_documents add column if not exists last_indexed_at timestamptz;
+
 alter table agent_documents enable row level security;
 
 grant select, insert, update, delete on agent_documents to authenticated;

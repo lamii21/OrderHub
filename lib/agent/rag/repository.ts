@@ -10,9 +10,16 @@ export type AgentDocument = {
   type: RagDocumentType;
   title: string;
   content: string;
+  // Phase 9 Étape 9.0 — timestamp of the last successful indexing pass
+  // (lib/agent/rag/indexing.ts's indexDocument()), stamped via
+  // stampDocumentIndexed below. null means never indexed; a failed
+  // attempt simply leaves this at its previous value rather than
+  // recording why — no richer indexing_status/indexing_error exists on
+  // purpose, see this column's own comment in supabase/schema.sql.
+  last_indexed_at: string | null;
 };
 
-const DOCUMENT_COLUMNS = "id, shop_id, type, title, content";
+const DOCUMENT_COLUMNS = "id, shop_id, type, title, content, last_indexed_at";
 
 export async function findDocumentById(documentId: number): Promise<AgentDocument | null> {
   const { data, error } = await supabase
@@ -39,6 +46,22 @@ export async function listDocumentsByShop(shopId: number): Promise<AgentDocument
   }
 
   return data ?? [];
+}
+
+// Called only by indexing.ts's indexDocument() — an internal system
+// bookkeeping write, not a merchant-facing edit, so it's scoped by
+// document_id alone (indexDocument already resolved the document itself
+// via findDocumentById before ever reaching this) rather than the double
+// (id, shop_id) scope updateDocument below needs for a merchant-supplied id.
+export async function stampDocumentIndexed(documentId: number): Promise<void> {
+  const { error } = await supabase
+    .from("agent_documents")
+    .update({ last_indexed_at: new Date().toISOString() })
+    .eq("id", documentId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 // Étape 8.6 — minimal document management. shop_id is trusted here (a new

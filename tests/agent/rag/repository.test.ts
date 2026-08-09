@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase", () => ({
 import {
   findDocumentById,
   listDocumentsByShop,
+  stampDocumentIndexed,
   createDocument,
   updateDocument,
   deleteDocument,
@@ -26,6 +27,7 @@ const documentRow = {
   type: "faq",
   title: "Livraison",
   content: "Nous livrons partout au Maroc sous 2 à 5 jours ouvrés.",
+  last_indexed_at: null,
 };
 
 describe("findDocumentById", () => {
@@ -37,7 +39,9 @@ describe("findDocumentById", () => {
 
     const result = await findDocumentById(1);
 
-    expect(builders.agent_documents[0].select).toHaveBeenCalledWith("id, shop_id, type, title, content");
+    expect(builders.agent_documents[0].select).toHaveBeenCalledWith(
+      "id, shop_id, type, title, content, last_indexed_at"
+    );
     expect(builders.agent_documents[0].eq).toHaveBeenCalledWith("id", 1);
     expect(result).toEqual(documentRow);
   });
@@ -68,7 +72,9 @@ describe("listDocumentsByShop", () => {
 
     const result = await listDocumentsByShop(15);
 
-    expect(builders.agent_documents[0].select).toHaveBeenCalledWith("id, shop_id, type, title, content");
+    expect(builders.agent_documents[0].select).toHaveBeenCalledWith(
+      "id, shop_id, type, title, content, last_indexed_at"
+    );
     expect(builders.agent_documents[0].eq).toHaveBeenCalledWith("shop_id", 15);
     expect(result).toEqual([documentRow]);
   });
@@ -87,6 +93,32 @@ describe("listDocumentsByShop", () => {
     holder.client = client;
 
     await expect(listDocumentsByShop(15)).rejects.toThrow("db down");
+  });
+});
+
+describe("stampDocumentIndexed", () => {
+  it("updates last_indexed_at for the given document id alone, no shop_id scope", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { agent_documents: { data: null, error: null } },
+    });
+    holder.client = client;
+
+    await stampDocumentIndexed(1);
+
+    expect(builders.agent_documents[0].update).toHaveBeenCalledWith({
+      last_indexed_at: expect.any(String),
+    });
+    expect(builders.agent_documents[0].eq).toHaveBeenCalledWith("id", 1);
+    expect(builders.agent_documents[0].eq).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockSupabase({
+      responses: { agent_documents: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(stampDocumentIndexed(1)).rejects.toThrow("db down");
   });
 });
 

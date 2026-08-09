@@ -138,6 +138,12 @@ export default async function ShopDetailPage({
           <Link href={`/shops/${shop.id}/workflows`} className="text-sm text-blue-600 hover:underline">
             Workflows
           </Link>
+          <Link
+            href={`/shops/${shop.id}/knowledge-base`}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Knowledge Base
+          </Link>
           <Link href={`/shops/${shop.id}/settings`} className="text-sm text-blue-600 hover:underline">
             Settings
           </Link>

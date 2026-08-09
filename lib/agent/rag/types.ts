@@ -20,6 +20,16 @@ export function isRagDocumentType(value: string): value is RagDocumentType {
   return (RAG_DOCUMENT_TYPES as readonly string[]).includes(value);
 }
 
+// Shared by the knowledge base list page and the new/edit document forms
+// (Étapes 9.2/9.3) — extracted here once a second consumer needed it,
+// rather than duplicated across both.
+export const RAG_DOCUMENT_TYPE_LABELS: Record<RagDocumentType, string> = {
+  faq: "FAQ",
+  policy: "Policy",
+  pdf: "PDF",
+  note: "Note",
+};
+
 // What the retriever (lib/agent/rag/retriever.ts, a later Étape) hands back
 // to the engine — never a raw agent_document_chunks row. No internal id
 // (neither the chunk's nor the document's) is exposed, same "never a raw

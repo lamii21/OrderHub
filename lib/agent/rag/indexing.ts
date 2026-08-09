@@ -1,4 +1,11 @@
-import { findDocumentById, listDocumentsByShop, deleteChunksForDocument, insertChunks, type NewChunk } from "./repository";
+import {
+  findDocumentById,
+  listDocumentsByShop,
+  deleteChunksForDocument,
+  insertChunks,
+  stampDocumentIndexed,
+  type NewChunk,
+} from "./repository";
 import { chunkText } from "./chunking";
 import { resolvePlatformEmbeddingProvider } from "./provider-config";
 
@@ -23,8 +30,11 @@ export async function indexDocument(documentId: number): Promise<void> {
     // An empty/whitespace-only document has nothing to embed — but any
     // chunks left over from a previous, non-empty version of this same
     // document would now be stale (answering from content that no longer
-    // exists), so they still need clearing.
+    // exists), so they still need clearing. Still stamped as indexed
+    // (Étape 9.0): correctly determining "this document has zero chunks"
+    // is a completed pass, not a failure.
     await deleteChunksForDocument(documentId);
+    await stampDocumentIndexed(documentId);
     return;
   }
 
@@ -45,6 +55,7 @@ export async function indexDocument(documentId: number): Promise<void> {
   // old chunks removed and the new ones written.
   await deleteChunksForDocument(documentId);
   await insertChunks(newChunks);
+  await stampDocumentIndexed(documentId);
 }
 
 export type ReindexShopResult = {

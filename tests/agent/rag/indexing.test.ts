@@ -5,6 +5,7 @@ const {
   listDocumentsByShop,
   deleteChunksForDocument,
   insertChunks,
+  stampDocumentIndexed,
   chunkText,
   resolvePlatformEmbeddingProvider,
   embed,
@@ -13,6 +14,7 @@ const {
   listDocumentsByShop: vi.fn(),
   deleteChunksForDocument: vi.fn(),
   insertChunks: vi.fn(),
+  stampDocumentIndexed: vi.fn(),
   chunkText: vi.fn(),
   resolvePlatformEmbeddingProvider: vi.fn(),
   embed: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("@/lib/agent/rag/repository", () => ({
   listDocumentsByShop,
   deleteChunksForDocument,
   insertChunks,
+  stampDocumentIndexed,
 }));
 vi.mock("@/lib/agent/rag/chunking", () => ({ chunkText }));
 vi.mock("@/lib/agent/rag/provider-config", () => ({ resolvePlatformEmbeddingProvider }));
@@ -44,6 +47,7 @@ beforeEach(() => {
   listDocumentsByShop.mockReset();
   deleteChunksForDocument.mockReset().mockResolvedValue(undefined);
   insertChunks.mockReset().mockResolvedValue(undefined);
+  stampDocumentIndexed.mockReset().mockResolvedValue(undefined);
   chunkText.mockReset().mockReturnValue(["Nous livrons partout au Maroc.", "Le délai est de 2 à 5 jours ouvrés."]);
   embed.mockReset().mockImplementation(async (_creds: unknown, content: string) => ({
     embedding: content.length > 0 ? [0.1, 0.2, 0.3] : [],
@@ -61,13 +65,16 @@ describe("indexDocument", () => {
     expect(deleteChunksForDocument).not.toHaveBeenCalled();
   });
 
-  it("embeds every chunk, then deletes the old chunks, then inserts the new ones — in that order", async () => {
+  it("embeds every chunk, then deletes the old chunks, then inserts the new ones, then stamps last_indexed_at — in that order", async () => {
     const calls: string[] = [];
     deleteChunksForDocument.mockImplementation(async () => {
       calls.push("delete");
     });
     insertChunks.mockImplementation(async () => {
       calls.push("insert");
+    });
+    stampDocumentIndexed.mockImplementation(async () => {
+      calls.push("stamp");
     });
     embed.mockImplementation(async () => {
       calls.push("embed");
@@ -76,7 +83,7 @@ describe("indexDocument", () => {
 
     await indexDocument(1);
 
-    expect(calls).toEqual(["embed", "embed", "delete", "insert"]);
+    expect(calls).toEqual(["embed", "embed", "delete", "insert", "stamp"]);
   });
 
   it("passes the resolved credentials to the provider for every chunk", async () => {
@@ -105,9 +112,10 @@ describe("indexDocument", () => {
 
     expect(deleteChunksForDocument).not.toHaveBeenCalled();
     expect(insertChunks).not.toHaveBeenCalled();
+    expect(stampDocumentIndexed).not.toHaveBeenCalled();
   });
 
-  it("clears stale chunks and never resolves an embedding provider for an empty document", async () => {
+  it("clears stale chunks, stamps last_indexed_at, and never resolves an embedding provider for an empty document", async () => {
     chunkText.mockReturnValue([]);
 
     await indexDocument(1);
@@ -115,6 +123,7 @@ describe("indexDocument", () => {
     expect(resolvePlatformEmbeddingProvider).not.toHaveBeenCalled();
     expect(deleteChunksForDocument).toHaveBeenCalledWith(1);
     expect(insertChunks).not.toHaveBeenCalled();
+    expect(stampDocumentIndexed).toHaveBeenCalledWith(1);
   });
 });
 
