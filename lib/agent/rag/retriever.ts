@@ -8,11 +8,19 @@ import type { RetrievedChunk } from "./types";
 export const DEFAULT_RAG_TOP_K = 5;
 
 // A cosine similarity floor below which a chunk is dropped even if it
-// ranked inside the top-k — an approximate, unvalidated default (no real
-// embedding provider is wired in yet, Étape 8.7), deliberately flagged
-// here rather than presented as tuned: recalibrate empirically once real
-// embeddings exist, actual score distributions vary by model.
-const MIN_RELEVANCE_SCORE = 0.75;
+// ranked inside the top-k. 0.74 is the Phase 10 Étape 10.1 calibrated V1
+// value — chosen from a real threshold sweep (real Gemini embeddings,
+// real pgvector search) against the RAG eval harness's 12
+// expectation-bearing queries: 0.74 gave 100% hit rate, the previous 0.75
+// gave 91.7% (one relevant document, scoring 0.7449, was dropped). The
+// sweep also found a hard structural limit — an unrelated document
+// scored 0.7553 for a different query, higher than that 0.7449 true
+// match — so no single global threshold fully separates every correct
+// match from every incorrect one on this dataset; 0.74 is the best
+// value found, not a guarantee. The eval dataset is still deliberately
+// small (scripts/rag-eval/dataset.ts) — revalidate this value once it
+// grows.
+const MIN_RELEVANCE_SCORE = 0.74;
 
 // Caps how many chunks from the SAME document can appear in one result —
 // keeps a single long document from crowding out every other source, same
