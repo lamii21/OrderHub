@@ -83,6 +83,9 @@ export const RAG_EVAL_DATASET: RagEvalDataset = {
         "Customer support is available Monday through Friday, 9am to 6pm, by email and live chat. Messages sent outside these hours are answered the next business day.",
     },
   ],
+  // V1 (Étape 10.0.a) queries — kept exactly as originally written, still
+  // the queries that produced the 10.0/10.1/10.2 baselines this project
+  // has already reported on.
   queries: [
     { query: "How long does shipping take?", relevantDocumentTitles: ["Shipping Times"] },
     {
@@ -103,5 +106,127 @@ export const RAG_EVAL_DATASET: RagEvalDataset = {
       query: "Do you offer same-day delivery in another galaxy?",
       relevantDocumentTitles: [],
     },
+
+    // ---- V2 additions (Étape 10.3) — 37 new queries, same 8 documents,
+    // no production logic touched. Purpose: revalidate MIN_RELEVANCE_SCORE
+    // (0.74, Étape 10.1/10.2) on a less easily-overfit sample, and probe
+    // document-boundary confusion deliberately rather than discovering it
+    // by accident the way 10.1 did. See this étape's own design report for
+    // the full category rationale. Categories below are transversal labels
+    // for how this dataset was composed, not a runtime concept — each
+    // query still appears exactly once in the array either way.
+
+    // -- Livraison/délais (+4, 5 total with the V1 query above)
+    { query: "When will my order arrive if I order today?", relevantDocumentTitles: ["Shipping Times"] },
+    { query: "Is express shipping available at checkout?", relevantDocumentTitles: ["Shipping Times"] },
+    { query: "What happens if I place my order late at night?", relevantDocumentTitles: ["Shipping Times"] },
+    {
+      query: "Does delivery take longer for orders outside the country?",
+      relevantDocumentTitles: ["International Shipping and Customs"],
+    },
+
+    // -- Retours/remboursements (+3, 5 total)
+    { query: "What's your return policy?", relevantDocumentTitles: ["Returns and Refunds"] },
+    { query: "Do I need the original packaging to return something?", relevantDocumentTitles: ["Returns and Refunds"] },
+    { query: "How will I get my money back after a return?", relevantDocumentTitles: ["Returns and Refunds"] },
+
+    // -- Annulation (+3, 4 total)
+    { query: "How do I stop my order?", relevantDocumentTitles: ["Order Cancellation"] },
+    { query: "Is there a deadline to cancel an order?", relevantDocumentTitles: ["Order Cancellation"] },
+    { query: "Can I cancel my order right after placing it?", relevantDocumentTitles: ["Order Cancellation"] },
+
+    // -- Paiement (+2, 5 total)
+    { query: "Do you take Visa or Mastercard?", relevantDocumentTitles: ["Accepted Payment Methods"] },
+    { query: "Is cash on delivery available everywhere?", relevantDocumentTitles: ["Accepted Payment Methods"] },
+
+    // -- Tracking (+3, 4 total)
+    { query: "Where's my order right now?", relevantDocumentTitles: ["How to Track an Order"] },
+    { query: "I didn't get a tracking link, what do I do?", relevantDocumentTitles: ["How to Track an Order"] },
+    { query: "Can I see my order status without checking email?", relevantDocumentTitles: ["How to Track an Order"] },
+
+    // -- Codes promo (+2, 4 total)
+    { query: "My discount code says it's invalid", relevantDocumentTitles: ["Promo Code Troubleshooting"] },
+    { query: "Why isn't my coupon applying to my cart?", relevantDocumentTitles: ["Promo Code Troubleshooting"] },
+
+    // -- Support (+2, 3 total)
+    { query: "When can I reach customer service?", relevantDocumentTitles: ["Customer Support Hours"] },
+    { query: "Is support available on weekends?", relevantDocumentTitles: ["Customer Support Hours"] },
+
+    // -- Multi-documents (+5, 6 total with the V1 shipping/customs query
+    // above) — deliberately probes the three document boundaries named in
+    // this étape's brief, rather than leaving them to be discovered by
+    // accident the way Order Cancellation/Returns and Refunds was in 10.1.
+    {
+      // Ambiguous by design, documented rather than silently decided:
+      // Order Cancellation's own content redirects to Returns and Refunds
+      // once the cancellation window has passed ("it can still be
+      // returned once delivered under our standard returns policy") — a
+      // customer asking this could legitimately still be inside the
+      // cancellation window (answer: Order Cancellation) or past it
+      // (answer: Returns and Refunds). Both documents are genuinely
+      // correct answers depending on timing the query itself doesn't
+      // specify, so both are labeled relevant rather than picking one.
+      query: "Can I cancel my order and get a refund instead?",
+      relevantDocumentTitles: ["Order Cancellation", "Returns and Refunds"],
+    },
+    {
+      // Compositional, not ambiguous: this genuinely needs facts from two
+      // independent documents (which payment methods exist, and how promo
+      // codes behave) that don't reference each other — unlike the
+      // cancellation/refund case above, there's no single-document answer
+      // being obscured here.
+      query: "Can I combine a discount code with cash on delivery?",
+      relevantDocumentTitles: ["Promo Code Troubleshooting", "Accepted Payment Methods"],
+    },
+    {
+      query: "If I'm outside the country, how long until my order ships and arrives?",
+      relevantDocumentTitles: ["Shipping Times", "International Shipping and Customs"],
+    },
+    {
+      // Ambiguous by design, same underlying gap as "Can I cancel my
+      // order and get a refund instead?" above, from a different angle:
+      // "before it even ships" doesn't guarantee the customer is still
+      // inside Order Cancellation's 1-hour free-cancellation window (real
+      // fulfillment can easily take longer than that before shipping) —
+      // exposing a genuine gap in the underlying policy documents
+      // themselves (what applies between the 1-hour mark and actual
+      // shipment is never stated), not just a labeling ambiguity. Both
+      // documents are the best available answer; flagged here rather than
+      // silently resolved.
+      query: "I want to return my order before it even ships",
+      relevantDocumentTitles: ["Order Cancellation", "Returns and Refunds"],
+    },
+    {
+      query: "Can I use a promo code and still pay when the order arrives?",
+      relevantDocumentTitles: ["Promo Code Troubleshooting", "Accepted Payment Methods"],
+    },
+
+    // -- Reformulations/synonymes (+5) — same intents already covered
+    // above, deliberately reworded with different vocabulary rather than
+    // just different syntax, so they add diagnostic value instead of
+    // duplicating an existing query.
+    { query: "How fast can I get my stuff?", relevantDocumentTitles: ["Shipping Times"] },
+    { query: "I don't want this anymore, can I send it back?", relevantDocumentTitles: ["Returns and Refunds"] },
+    { query: "Got a code that won't work at checkout", relevantDocumentTitles: ["Promo Code Troubleshooting"] },
+    { query: "Need to know when you're open for questions", relevantDocumentTitles: ["Customer Support Hours"] },
+    { query: "Any way to pay without a card?", relevantDocumentTitles: ["Accepted Payment Methods"] },
+
+    // -- Requêtes courtes (+4) — fragmentary, the way an impatient
+    // customer might actually type rather than a full sentence.
+    { query: "Shipping time?", relevantDocumentTitles: ["Shipping Times"] },
+    { query: "Cancel order?", relevantDocumentTitles: ["Order Cancellation"] },
+    { query: "Track order", relevantDocumentTitles: ["How to Track an Order"] },
+    { query: "Support hours?", relevantDocumentTitles: ["Customer Support Hours"] },
+
+    // -- Sans document pertinent attendu (+4, 5 total with the V1 query
+    // above) — plausible e-commerce questions this knowledge base
+    // genuinely doesn't cover, not just absurd ones. A harder test of
+    // MIN_RELEVANCE_SCORE's precision than "same-day delivery in another
+    // galaxy" alone: nothing in these 8 documents should score high
+    // enough to pass the threshold for any of them.
+    { query: "Do you offer gift wrapping?", relevantDocumentTitles: [] },
+    { query: "Can I change the delivery address after placing an order?", relevantDocumentTitles: [] },
+    { query: "Do you have a loyalty or rewards program?", relevantDocumentTitles: [] },
+    { query: "Can I get an invoice for my business?", relevantDocumentTitles: [] },
   ],
 };
