@@ -9,7 +9,7 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-import { findOrderByOrderId, findMostRecentOrderForCustomer } from "@/lib/agent/tools/orders/repository";
+import { findOrderByOrderId, findMostRecentOrderForCustomer, searchOrdersForCustomer } from "@/lib/agent/tools/orders/repository";
 
 const orderRow = {
   order_id: "ORD-1001",
@@ -85,5 +85,73 @@ describe("findMostRecentOrderForCustomer", () => {
     holder.client = client;
 
     await expect(findMostRecentOrderForCustomer(15, 42)).rejects.toThrow("db down");
+  });
+});
+
+describe("searchOrdersForCustomer", () => {
+  it("scopes by shop_id and customer_id, orders newest-first, and applies the given limit with no filters", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { orders: { data: [orderRow], error: null } },
+    });
+    holder.client = client;
+
+    const result = await searchOrdersForCustomer(15, 42, {}, 5);
+
+    expect(builders.orders[0].eq).toHaveBeenNthCalledWith(1, "shop_id", 15);
+    expect(builders.orders[0].eq).toHaveBeenNthCalledWith(2, "customer_id", 42);
+    expect(builders.orders[0].ilike).not.toHaveBeenCalled();
+    expect(builders.orders[0].order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builders.orders[0].limit).toHaveBeenCalledWith(5);
+    expect(result).toEqual([orderRow]);
+  });
+
+  it("adds a status filter when given", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { orders: { data: [orderRow], error: null } },
+    });
+    holder.client = client;
+
+    await searchOrdersForCustomer(15, 42, { status: "shipped" }, 5);
+
+    expect(builders.orders[0].eq).toHaveBeenNthCalledWith(3, "status", "shipped");
+  });
+
+  it("adds an escaped product ILIKE filter when given", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { orders: { data: [orderRow], error: null } },
+    });
+    holder.client = client;
+
+    await searchOrdersForCustomer(15, 42, { product: "50% off_deal" }, 5);
+
+    expect(builders.orders[0].ilike).toHaveBeenCalledWith("product", "%50\\% off\\_deal%");
+  });
+
+  it("combines both filters when both are given", async () => {
+    const { client, builders } = createMockSupabase({
+      responses: { orders: { data: [orderRow], error: null } },
+    });
+    holder.client = client;
+
+    await searchOrdersForCustomer(15, 42, { status: "shipped", product: "veste" }, 5);
+
+    expect(builders.orders[0].eq).toHaveBeenNthCalledWith(3, "status", "shipped");
+    expect(builders.orders[0].ilike).toHaveBeenCalledWith("product", "%veste%");
+  });
+
+  it("returns an empty array, not null, when nothing matches", async () => {
+    const { client } = createMockSupabase({ responses: { orders: { data: null, error: null } } });
+    holder.client = client;
+
+    await expect(searchOrdersForCustomer(15, 42, {}, 5)).resolves.toEqual([]);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockSupabase({
+      responses: { orders: { data: null, error: { message: "db down" } } },
+    });
+    holder.client = client;
+
+    await expect(searchOrdersForCustomer(15, 42, {}, 5)).rejects.toThrow("db down");
   });
 });

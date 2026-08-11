@@ -1,7 +1,10 @@
 import type { ChatTool } from "@/lib/ai";
 import { getOrderStatusTool } from "./orders/tool";
+import { searchOrdersTool } from "./orders/search-orders-tool";
 import { searchProductsTool } from "./products/tool";
 import { checkPromoCodeTool } from "./promo-codes/tool";
+import { getCustomerTool } from "./customers/tool";
+import { getInvoiceTool } from "./invoices/tool";
 import type { ToolDefinition } from "./types";
 
 // Same registry-of-named-modules shape as lib/ai/index.ts's chatProviders/
@@ -10,10 +13,16 @@ import type { ToolDefinition } from "./types";
 // check_promo_code (Étape 6.3) are exactly the pure additions the Phase 5
 // Étape 8 comment on this file anticipated: nothing in dispatch.ts or the
 // engine's provider loop needed to change to add any of them.
+// get_customer, search_orders, and get_invoice (Étape 10.9) are the same
+// kind of pure addition, read-only, on top of the structured commerce data
+// already reachable by the first three.
 const tools: Record<string, ToolDefinition> = {
   get_order_status: getOrderStatusTool,
   search_products: searchProductsTool,
   check_promo_code: checkPromoCodeTool,
+  get_customer: getCustomerTool,
+  search_orders: searchOrdersTool,
+  get_invoice: getInvoiceTool,
 };
 
 export function getTool(name: string): ToolDefinition | null {

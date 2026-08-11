@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findOrderByOrderId, findMostRecentOrderForCustomer } = vi.hoisted(() => ({
+const { findOrderByOrderId, findMostRecentOrderForCustomer, searchOrdersForCustomer } = vi.hoisted(() => ({
   findOrderByOrderId: vi.fn(),
   findMostRecentOrderForCustomer: vi.fn(),
+  searchOrdersForCustomer: vi.fn(),
 }));
 
-vi.mock("@/lib/agent/tools/orders/repository", () => ({ findOrderByOrderId, findMostRecentOrderForCustomer }));
+vi.mock("@/lib/agent/tools/orders/repository", () => ({
+  findOrderByOrderId,
+  findMostRecentOrderForCustomer,
+  searchOrdersForCustomer,
+}));
 
-import { getOrderStatusForCustomer } from "@/lib/agent/tools/orders/service";
+import { getOrderStatusForCustomer, searchOrdersForCustomer as searchOrdersForCustomerService, DEFAULT_ORDER_SEARCH_LIMIT } from "@/lib/agent/tools/orders/service";
 
 const order = {
   order_id: "ORD-1001",
@@ -21,6 +26,7 @@ const order = {
 beforeEach(() => {
   findOrderByOrderId.mockReset();
   findMostRecentOrderForCustomer.mockReset();
+  searchOrdersForCustomer.mockReset();
 });
 
 describe("getOrderStatusForCustomer", () => {
@@ -52,5 +58,24 @@ describe("getOrderStatusForCustomer", () => {
   it("returns found: false when nothing matches, with no order_id", async () => {
     findMostRecentOrderForCustomer.mockResolvedValue(null);
     await expect(getOrderStatusForCustomer(15, 42)).resolves.toEqual({ found: false });
+  });
+});
+
+describe("searchOrdersForCustomer (service)", () => {
+  it("passes shop_id, customer_id, and filters through, with the fixed default limit", async () => {
+    searchOrdersForCustomer.mockResolvedValue([order]);
+
+    const result = await searchOrdersForCustomerService(15, 42, { status: "shipped", product: "veste" });
+
+    expect(searchOrdersForCustomer).toHaveBeenCalledWith(15, 42, { status: "shipped", product: "veste" }, DEFAULT_ORDER_SEARCH_LIMIT);
+    expect(result).toEqual({ orders: [order] });
+  });
+
+  it("wraps an empty result the same way", async () => {
+    searchOrdersForCustomer.mockResolvedValue([]);
+
+    const result = await searchOrdersForCustomerService(15, 42, {});
+
+    expect(result).toEqual({ orders: [] });
   });
 });

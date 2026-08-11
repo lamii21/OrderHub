@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { OrderStatus } from "@/lib/validation";
+import { escapeLikePattern } from "../shared";
 
 // Pure Supabase I/O — no decisions here, same rule as
 // lib/agent/context/repository.ts. Every query below is scoped by BOTH
@@ -66,4 +67,38 @@ export async function findMostRecentOrderForCustomer(
   }
 
   return data;
+}
+
+export type OrderSearchFilters = {
+  status?: OrderStatus;
+  product?: string;
+};
+
+// Same shop_id + customer_id double-scoping as the two functions above —
+// filters are additive (both, either, or neither may be present), never a
+// substitute for that scoping. `product` reuses the same ILIKE-escaping
+// convention as tools/products/repository.ts's searchProductsByName.
+export async function searchOrdersForCustomer(
+  shopId: number,
+  customerId: number,
+  filters: OrderSearchFilters,
+  limit: number
+): Promise<OrderForCustomer[]> {
+  let query = supabase.from("orders").select(ORDER_COLUMNS).eq("shop_id", shopId).eq("customer_id", customerId);
+
+  if (filters.status) {
+    query = query.eq("status", filters.status);
+  }
+
+  if (filters.product) {
+    query = query.ilike("product", `%${escapeLikePattern(filters.product)}%`);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data ?? [];
 }

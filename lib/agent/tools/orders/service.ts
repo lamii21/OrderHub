@@ -1,4 +1,10 @@
-import { findOrderByOrderId, findMostRecentOrderForCustomer, type OrderForCustomer } from "./repository";
+import {
+  findOrderByOrderId,
+  findMostRecentOrderForCustomer,
+  searchOrdersForCustomer as searchOrdersForCustomerRepo,
+  type OrderForCustomer,
+  type OrderSearchFilters,
+} from "./repository";
 
 export type OrderStatusResult = { found: true; order: OrderForCustomer } | { found: false };
 
@@ -20,4 +26,19 @@ export async function getOrderStatusForCustomer(
     : await findMostRecentOrderForCustomer(shopId, customerId);
 
   return order ? { found: true, order } : { found: false };
+}
+
+// Caps results at a small, fixed count — same reasoning as
+// tools/products/service.ts's DEFAULT_SEARCH_RESULT_LIMIT: every order this
+// returns is serialized into the next prompt, and a long list is no more
+// useful to a customer in a chat than a short one.
+export const DEFAULT_ORDER_SEARCH_LIMIT = 5;
+
+export async function searchOrdersForCustomer(
+  shopId: number,
+  customerId: number,
+  filters: OrderSearchFilters
+): Promise<{ orders: OrderForCustomer[] }> {
+  const orders = await searchOrdersForCustomerRepo(shopId, customerId, filters, DEFAULT_ORDER_SEARCH_LIMIT);
+  return { orders };
 }
