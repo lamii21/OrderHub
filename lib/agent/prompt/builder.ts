@@ -57,6 +57,25 @@ export function buildSystemPrompt(context: AgentExecutionContext): string {
     );
   }
 
+  // Explicit grounding instruction — added after Priority 3 validation
+  // ("mode finalisation") demonstrated a real hallucination: asked "Do you
+  // offer gift wrapping?" (no tool for it, no matching knowledge-base
+  // chunk above the 0.72 threshold), the model answered "Yes, we do!" and
+  // invented a plausible-sounding policy. A similarly off-topic question
+  // ("Can you help me file my taxes?") was correctly declined without this
+  // instruction — so abstention was already emergent for clearly
+  // out-of-domain questions, but not for in-domain ones the agent simply
+  // has no data for. This section is what turns that into an actual
+  // instruction rather than a hopeful default; it is not a claim that the
+  // model can no longer hallucinate, only that it is now explicitly told
+  // not to guess when its two real sources of truth (tool results, the
+  // knowledge base section below) are silent.
+  sections.push(
+    "Only state facts that come from a tool result or from the shop's knowledge base section below (if present). " +
+      "If a question isn't answered by either, say plainly that you don't have that information rather than " +
+      "guessing or inventing a policy, price, or fact about the shop."
+  );
+
   if (customer?.name) {
     sections.push(`You are speaking with ${customer.name}.`);
   }

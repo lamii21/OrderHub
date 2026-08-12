@@ -73,6 +73,12 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt(context)).not.toContain("Supported languages");
   });
 
+  it("always includes an explicit grounding/abstention instruction (Priority 3 finalisation fix)", () => {
+    const prompt = buildSystemPrompt(baseContext());
+    expect(prompt).toContain("Only state facts that come from a tool result or from the shop's knowledge base");
+    expect(prompt).toContain("say plainly that you don't have that information");
+  });
+
   it("names the customer when known", () => {
     const context = baseContext();
     context.conversation_context.customer = { id: 42, name: "lamiae", phone: "212600000000", email: null };
@@ -140,8 +146,11 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("- Retours (policy): Les retours sont acceptés sous 14 jours.");
   });
 
-  it("omits the knowledge base section entirely when nothing was retrieved", () => {
-    expect(buildSystemPrompt(baseContext())).not.toContain("knowledge base");
+  it("omits the retrieved-chunks section entirely when nothing was retrieved", () => {
+    // "knowledge base" itself still appears — the grounding instruction
+    // above references it generically — but the actual content section
+    // (formatRetrievedContext's own header) must not.
+    expect(buildSystemPrompt(baseContext())).not.toContain("Relevant information from the shop's knowledge base:");
   });
 
   it("never mentions score/id fields for a retrieved chunk — only title, type, and content reach the prompt", () => {
