@@ -144,6 +144,9 @@ export default async function ShopDetailPage({
           >
             Knowledge Base
           </Link>
+          <Link href={`/shops/${shop.id}/agent`} className="text-sm text-blue-600 hover:underline">
+            AI Agent
+          </Link>
           <Link href={`/shops/${shop.id}/settings`} className="text-sm text-blue-600 hover:underline">
             Settings
           </Link>

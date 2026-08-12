@@ -97,6 +97,9 @@ export default async function ShopSettingsPage({
             >
               WhatsApp / SMS / Email / CRM credentials →
             </Link>
+            <Link href={`/shops/${shop.id}/agent`} className="text-sm text-blue-600 hover:underline">
+              AI Agent →
+            </Link>
           </div>
         </div>
         <ShopHealthBadge shop={shop} />

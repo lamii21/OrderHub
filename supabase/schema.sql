@@ -2327,12 +2327,21 @@ create table if not exists agent_conversations (
   id bigint generated always as identity primary key,
   shop_id bigint not null references shops(id) on delete cascade,
   customer_id bigint references customers(id),
-  channel text not null default 'whatsapp' check (channel in ('whatsapp')),
+  channel text not null default 'whatsapp' check (channel in ('whatsapp', 'console')),
   external_thread_id text not null,
   status text not null default 'open' check (status in ('open', 'resolved', 'escalated')),
   last_message_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+-- 'console' (Étape "mode finalisation" — internal test/demo console,
+-- app/shops/[id]/agent/console) added after 'whatsapp' was the only value
+-- for a while — an idempotent widening for a table that may already exist
+-- with the narrower constraint, same "alter table ... add column if not
+-- exists" posture the rest of this file already uses for additive changes.
+alter table agent_conversations drop constraint if exists agent_conversations_channel_check;
+alter table agent_conversations add constraint agent_conversations_channel_check
+  check (channel in ('whatsapp', 'console'));
 
 create unique index if not exists agent_conversations_thread_key
   on agent_conversations (shop_id, channel, external_thread_id);

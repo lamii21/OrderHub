@@ -68,6 +68,15 @@ export const CREDENTIAL_MODULES = {
       { name: "model", label: "Model", required: true, type: "text" },
     ],
   },
+  "ai-sales-agent": {
+    label: "AI Sales Agent (conversational)",
+    description:
+      "OpenRouter — powers the conversational Agent (Tool calling + RAG) configured on the Agent page. Distinct from the single-turn \"AI Agent\" module above.",
+    fields: [
+      { name: "apiKey", label: "OpenRouter API Key", required: true, type: "password" },
+      { name: "model", label: "Model", required: true, type: "text" },
+    ],
+  },
   "payment-link": {
     label: "Payment Link",
     description:

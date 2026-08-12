@@ -25,6 +25,12 @@ const tools: Record<string, ToolDefinition> = {
   get_invoice: getInvoiceTool,
 };
 
+// Single source of truth for whichever UI offers a tool checklist (the
+// Agent settings page) — same role SUPPORTED_CHAT_PROVIDERS already plays
+// for lib/ai/index.ts's own provider dropdown, so that page never
+// hardcodes a second, driftable copy of this list.
+export const AVAILABLE_TOOL_NAMES = Object.keys(tools);
+
 export function getTool(name: string): ToolDefinition | null {
   return tools[name] ?? null;
 }
