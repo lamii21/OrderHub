@@ -5,6 +5,7 @@ import { appendMessage } from "../conversation/service";
 import { emitAgentEvent } from "../events";
 import { maybeSummarizeConversation } from "../summary/service";
 import { retrieveRelevantChunks } from "../rag/retriever";
+import { normalizeRagQuery } from "../rag/query-normalization";
 import { runProviderLoop } from "./provider-loop";
 import type { AgentEngineOptions, AgentExecutionContext, AgentRequest, AgentResponse } from "./types";
 import type { AgentToolCall, MessageMetadata } from "../types";
@@ -71,9 +72,14 @@ async function retrieveContext(context: AgentExecutionContext): Promise<Retrieve
     return [];
   }
 
+  // Only the text handed to RAG is normalized (Étape 10.9.z.1) — queryText
+  // itself is a local variable used nowhere else; the provider/LLM and its
+  // tool_calls (runProviderLoop, below) read the conversation's own
+  // messages directly, never this function's return value, so they always
+  // see the customer's original wording, structured references included.
   return retrieveRelevantChunks(
     context.conversation_context.shop.id,
-    queryText,
+    normalizeRagQuery(queryText),
     context.agent_config.rag_top_k ?? undefined
   );
 }

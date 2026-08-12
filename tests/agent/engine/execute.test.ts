@@ -305,4 +305,35 @@ describe("executeConversation — retrieveContext (Phase 8)", () => {
 
     expect(retrieveRelevantChunks).toHaveBeenCalledWith(15, "wach 3andkoum stock?", undefined);
   });
+
+  it("normalizes a structured reference out of the RAG query, while the provider loop still receives the original wording (Étape 10.9.z.1)", async () => {
+    const composedMessage: AgentMessage = {
+      ...userMessage,
+      content: "What is the refund policy for my order #4521?",
+    };
+    assembleExecutionContext.mockResolvedValue({
+      ...activeContext,
+      agent_config: { ...activeContext.agent_config, rag_enabled: true },
+      conversation_context: { ...activeContext.conversation_context, recent_messages: [composedMessage] },
+    });
+
+    await executeConversation({ conversation_id: 1 });
+
+    // RAG only ever sees the normalized text.
+    expect(retrieveRelevantChunks).toHaveBeenCalledWith(
+      15,
+      "What is the refund policy for my order?",
+      undefined
+    );
+
+    // The provider/LLM (and, through it, any tool_calls) is built from the
+    // context's own conversation.recent_messages, never from the local
+    // normalized string above — this asserts the context object handed to
+    // runProviderLoop still carries the ORIGINAL message, order number
+    // included.
+    const contextPassedToProviderLoop = runProviderLoop.mock.calls[0][0] as AgentExecutionContext;
+    expect(contextPassedToProviderLoop.conversation_context.recent_messages[0].content).toBe(
+      "What is the refund policy for my order #4521?"
+    );
+  });
 });
