@@ -70,6 +70,9 @@ export default async function KnowledgeBaseListPage({
           <Link href={`/shops/${shop.id}`} className="text-sm text-blue-600 hover:underline">
             ← Back to {shop.name}
           </Link>
+          <Link href={`/shops/${shop.id}/agent`} className="ml-3 text-sm text-blue-600 hover:underline">
+            AI Agent settings →
+          </Link>
         </div>
         <div className="flex items-center gap-3">
           {rows.length > 0 && (
