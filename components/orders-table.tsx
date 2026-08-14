@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import type { KeyboardEvent } from "react";
 import {
   Table,
   TableBody,
@@ -25,8 +26,21 @@ export function OrdersTable({
 }) {
   const router = useRouter();
 
+  const openOrder = (orderId: number) => router.push(`/orders/${orderId}`);
+
+  // A row's onClick alone left it unreachable by keyboard — role="button" +
+  // tabIndex + onKeyDown make it a real activatable control for Enter/Space,
+  // same as clicking it, without turning every TableRow everywhere into a
+  // button (only rows that are actually navigable get this).
+  const handleRowKeyDown = (orderId: number) => (event: KeyboardEvent<HTMLTableRowElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openOrder(orderId);
+    }
+  };
+
   return (
-    <div className="rounded-lg border bg-white">
+    <div className="rounded-lg bg-white">
       <Table>
         <TableHeader>
           <TableRow>
@@ -48,18 +62,22 @@ export function OrdersTable({
           {orders.map((order) => (
             <TableRow
               key={order.id}
-              onClick={() => router.push(`/orders/${order.id}`)}
+              onClick={() => openOrder(order.id)}
+              onKeyDown={handleRowKeyDown(order.id)}
+              role="button"
+              tabIndex={0}
+              aria-label={`Open order for ${order.customer_name ?? "unknown customer"}`}
               className="cursor-pointer"
             >
-              <TableCell>{order.customer_name ?? "-"}</TableCell>
-              <TableCell>{order.customer_phone ?? "-"}</TableCell>
-              <TableCell>{order.customer_city ?? "-"}</TableCell>
-              <TableCell>{order.customer_address ?? "-"}</TableCell>
-              <TableCell>{order.product ?? "-"}</TableCell>
-              <TableCell>{order.quantity ?? "-"}</TableCell>
-              <TableCell>{order.price ?? "-"}</TableCell>
-              <TableCell>{order.shops?.name ?? "-"}</TableCell>
-              <TableCell>{order.shops?.platform ?? "-"}</TableCell>
+              <TableCell className="font-medium text-neutral-900">{order.customer_name ?? "—"}</TableCell>
+              <TableCell>{order.customer_phone ?? "—"}</TableCell>
+              <TableCell>{order.customer_city ?? "—"}</TableCell>
+              <TableCell>{order.customer_address ?? "—"}</TableCell>
+              <TableCell>{order.product ?? "—"}</TableCell>
+              <TableCell>{order.quantity ?? "—"}</TableCell>
+              <TableCell>{order.price ?? "—"}</TableCell>
+              <TableCell>{order.shops?.name ?? "—"}</TableCell>
+              <TableCell>{order.shops?.platform ?? "—"}</TableCell>
               <TableCell onClick={(event) => event.stopPropagation()}>
                 <StatusSelect orderId={order.id} status={order.status} />
               </TableCell>
@@ -68,13 +86,13 @@ export function OrdersTable({
                   status={workflowStatusByOrderId?.get(order.id) ?? "none"}
                 />
               </TableCell>
-              <TableCell>{new Date(order.created_at).toLocaleString()}</TableCell>
+              <TableCell className="text-neutral-500">{new Date(order.created_at).toLocaleString()}</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
       {orders.length === 0 && (
-        <p className="p-6 text-center text-gray-500">
+        <p className="p-10 text-center text-sm text-neutral-500">
           No orders yet. Once your Google Apps Script sends its first order, it will show up
           here.
         </p>

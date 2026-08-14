@@ -49,7 +49,15 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const stats = (statsResult.data as DashboardStats[])[0];
+  // Same defensive default as app/dashboard/page.tsx — the RPC should
+  // always return exactly one aggregate row, but this avoids a hard crash
+  // (no per-route error boundary exists) if that were ever violated.
+  const stats = (statsResult.data as DashboardStats[])[0] ?? {
+    total_orders: 0,
+    pending_orders: 0,
+    delivered_orders: 0,
+    total_revenue: 0,
+  };
   const ordersPerDay = ordersPerDayResult.data as OrdersPerDayPoint[];
   const topProducts = topProductsResult.data as TopProductPoint[];
   const revenueByCity = revenueByCityResult.data as RevenueByCityPoint[];

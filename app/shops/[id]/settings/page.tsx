@@ -9,7 +9,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
 import { ShopHealthBadge } from "@/components/shop-health-badge";
 import { GoogleAccountCard } from "@/components/google-account-card";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
 import { CURRENCIES, getTimezones } from "@/lib/shop-settings";
 import { disconnectStore } from "@/app/shops/actions";
@@ -133,7 +133,7 @@ export default async function ShopSettingsPage({
       )}
       {(sp.error || sp.google_error) && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error ?? sp.google_error ?? "")}
+          {safeDecodeURIComponent(sp.error ?? sp.google_error ?? "")}
         </p>
       )}
 

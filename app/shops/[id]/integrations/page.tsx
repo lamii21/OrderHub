@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
 import { CREDENTIAL_MODULES, CREDENTIAL_MODULE_NAMES } from "@/lib/module-credential-fields";
@@ -75,7 +76,7 @@ export default async function ShopIntegrationsPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

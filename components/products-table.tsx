@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { KeyboardEvent } from "react";
 import {
   Table,
   TableBody,
@@ -10,14 +11,39 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DetailModal, DetailRow } from "@/components/detail-modal";
+import { Badge } from "@/components/ui/badge";
 import type { Product } from "@/types/product";
+
+// Surfaces stock at a glance (out of stock must be immediately visible,
+// per the Phase 5 brief) without inventing a new status enum — this is a
+// pure presentation bucket over the existing stock_quantity number.
+function StockBadge({ quantity }: { quantity: number | string | null }) {
+  if (quantity === null) {
+    return <Badge tone="neutral">Not tracked</Badge>;
+  }
+  const n = Number(quantity);
+  if (n <= 0) {
+    return <Badge tone="danger">Out of stock</Badge>;
+  }
+  if (n <= 5) {
+    return <Badge tone="warning">Low · {n}</Badge>;
+  }
+  return <Badge tone="success">{n} in stock</Badge>;
+}
 
 export function ProductsTable({ products }: { products: Product[] }) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
+  const handleRowKeyDown = (product: Product) => (event: KeyboardEvent<HTMLTableRowElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setSelectedProduct(product);
+    }
+  };
+
   return (
     <>
-      <div className="rounded-lg border bg-white">
+      <div className="rounded-lg bg-white">
         <Table>
           <TableHeader>
             <TableRow>
@@ -26,7 +52,7 @@ export function ProductsTable({ products }: { products: Product[] }) {
               <TableHead>Shop</TableHead>
               <TableHead>Platform</TableHead>
               <TableHead>Current Price</TableHead>
-              <TableHead>Stock Quantity</TableHead>
+              <TableHead>Stock</TableHead>
               <TableHead>Total Orders</TableHead>
               <TableHead>Total Revenue</TableHead>
             </TableRow>
@@ -36,14 +62,20 @@ export function ProductsTable({ products }: { products: Product[] }) {
               <TableRow
                 key={product.id}
                 onClick={() => setSelectedProduct(product)}
+                onKeyDown={handleRowKeyDown(product)}
+                role="button"
+                tabIndex={0}
+                aria-label={`View details for ${product.name}`}
                 className="cursor-pointer"
               >
-                <TableCell>{product.name}</TableCell>
-                <TableCell>{product.sku ?? "-"}</TableCell>
-                <TableCell>{product.shop_name ?? "-"}</TableCell>
-                <TableCell>{product.platform ?? "-"}</TableCell>
-                <TableCell>{product.price ?? "-"}</TableCell>
-                <TableCell>{product.stock_quantity ?? "-"}</TableCell>
+                <TableCell className="font-medium text-neutral-900">{product.name}</TableCell>
+                <TableCell>{product.sku ?? "—"}</TableCell>
+                <TableCell>{product.shop_name ?? "—"}</TableCell>
+                <TableCell>{product.platform ?? "—"}</TableCell>
+                <TableCell>{product.price ?? "—"}</TableCell>
+                <TableCell>
+                  <StockBadge quantity={product.stock_quantity} />
+                </TableCell>
                 <TableCell>{Number(product.total_orders)}</TableCell>
                 <TableCell>{Number(product.total_revenue).toFixed(2)}</TableCell>
               </TableRow>
@@ -51,7 +83,7 @@ export function ProductsTable({ products }: { products: Product[] }) {
           </TableBody>
         </Table>
         {products.length === 0 && (
-          <p className="p-6 text-center text-gray-500">
+          <p className="p-10 text-center text-sm text-neutral-500">
             No products yet. Add sample rows to the products table, or connect a Shopify store
             and sync products.
           </p>

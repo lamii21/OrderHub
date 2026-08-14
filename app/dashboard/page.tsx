@@ -8,6 +8,8 @@ import { StatCard } from "@/components/stat-card";
 import { ErrorBanner } from "@/components/error-banner";
 import { ExecutionStatusLabel } from "@/components/execution-status-label";
 import { RealtimeDashboardRefresher } from "@/components/realtime-dashboard-refresher";
+import { Icon } from "@/components/ui/icon";
+import { ICONS } from "@/components/icons";
 import { formatRelativeTime } from "@/lib/utils";
 import type { WorkflowExecutionWithWorkflow } from "@/types/workflow";
 
@@ -89,7 +91,16 @@ export default async function DashboardPage({
     console.error("Latest workflow execution load failed:", workflowExecutionError);
   }
 
-  const stats = (statsRows as DashboardStats[])[0];
+  // get_dashboard_stats() is an aggregate query, so it should always return
+  // exactly one row — but a defensive default is cheap insurance against a
+  // hard crash (to the root error boundary, no per-route one exists) if
+  // that guarantee were ever violated, rather than trusting it silently.
+  const stats = (statsRows as DashboardStats[])[0] ?? {
+    total_orders: 0,
+    pending_orders: 0,
+    delivered_orders: 0,
+    total_revenue: 0,
+  };
 
   // A second, dependent fetch (needs this page's own order ids) — same
   // "secondary section, own failure doesn't block the rest of the page"
@@ -123,39 +134,64 @@ export default async function DashboardPage({
   }
 
   return (
-    <main className="mx-auto max-w-6xl p-6">
+    <main className="mx-auto max-w-7xl p-4 sm:p-6">
       <RealtimeDashboardRefresher />
-      <h1 className="mb-4 text-2xl font-semibold">Orders</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-neutral-900">Dashboard</h1>
+        <p className="mt-1 text-sm text-neutral-500">
+          Your orders, sales, and automation activity at a glance.
+        </p>
+      </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard label="Total Orders" value={Number(stats.total_orders)} />
-        <StatCard label="Pending Orders" value={Number(stats.pending_orders)} />
-        <StatCard label="Delivered Orders" value={Number(stats.delivered_orders)} />
-        <StatCard label="Total Revenue" value={Number(stats.total_revenue).toFixed(2)} />
+        <StatCard
+          label="Total Orders"
+          value={Number(stats.total_orders)}
+          tone="brand"
+          icon={<Icon path={ICONS.orders} className="h-4.5 w-4.5" />}
+        />
+        <StatCard
+          label="Pending Orders"
+          value={Number(stats.pending_orders)}
+          tone="warning"
+          icon={<Icon path={ICONS.pending} className="h-4.5 w-4.5" />}
+        />
+        <StatCard
+          label="Delivered Orders"
+          value={Number(stats.delivered_orders)}
+          tone="success"
+          icon={<Icon path={ICONS.delivered} className="h-4.5 w-4.5" />}
+        />
+        <StatCard
+          label="Total Revenue"
+          value={`$${Number(stats.total_revenue).toFixed(2)}`}
+          tone="brand"
+          icon={<Icon path={ICONS.revenue} className="h-4.5 w-4.5" />}
+        />
         <StatCard
           label="Latest Synchronization"
           value={
             sync ? (
               <div className="space-y-0.5 text-sm font-normal">
-                <p className="font-semibold text-gray-900">
+                <p className="font-semibold text-neutral-900">
                   {sync.shops?.name ?? "Unknown shop"} ·{" "}
                   {sync.type === "products" ? "Products" : "Orders"}
                 </p>
                 <p
                   className={
                     sync.status === "success"
-                      ? "font-medium text-green-700"
-                      : "font-medium text-red-700"
+                      ? "font-medium text-success-700"
+                      : "font-medium text-danger-700"
                   }
                 >
                   {sync.status === "success" ? "Success" : "Failed"}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-neutral-500">
                   {formatRelativeTime(new Date(sync.started_at))}
                 </p>
               </div>
             ) : (
-              <span className="text-base font-normal text-gray-400">No syncs yet</span>
+              <span className="text-base font-normal text-neutral-400">No syncs yet</span>
             )
           }
         />
@@ -164,45 +200,50 @@ export default async function DashboardPage({
           value={
             latestExecution ? (
               <div className="space-y-0.5 text-sm font-normal">
-                <p className="font-semibold text-gray-900">
+                <p className="font-semibold text-neutral-900">
                   {latestExecution.workflows?.name ?? "Unknown workflow"}
                 </p>
                 <p className="font-medium">
                   <ExecutionStatusLabel entry={latestExecution} />
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-neutral-500">
                   {formatRelativeTime(new Date(latestExecution.started_at))}
                 </p>
               </div>
             ) : (
-              <span className="text-base font-normal text-gray-400">No executions yet</span>
+              <span className="text-base font-normal text-neutral-400">No executions yet</span>
             )
           }
         />
       </div>
 
-      <OrdersTable orders={orders} workflowStatusByOrderId={workflowStatusByOrderId} />
+      <div className="rounded-lg border border-neutral-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
+          <h2 className="text-sm font-semibold text-neutral-900">Recent Orders</h2>
+        </div>
+        <OrdersTable orders={orders} workflowStatusByOrderId={workflowStatusByOrderId} />
+      </div>
 
       {(totalOrders ?? 0) > PAGE_SIZE && (
-        <div className="mt-4 flex items-center justify-between text-sm">
-          <span className="text-gray-500">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+          <span className="text-neutral-500">
             Page {page} of {Math.max(1, Math.ceil((totalOrders ?? 0) / PAGE_SIZE))} ·{" "}
             {totalOrders} orders
           </span>
           <div className="flex gap-3">
             {page > 1 ? (
-              <Link href={`/dashboard?page=${page - 1}`} className="text-blue-600 hover:underline">
+              <Link href={`/dashboard?page=${page - 1}`} className="font-medium text-brand-600 hover:text-brand-700">
                 ← Previous
               </Link>
             ) : (
-              <span className="text-gray-300">← Previous</span>
+              <span className="text-neutral-300">← Previous</span>
             )}
             {to + 1 < (totalOrders ?? 0) ? (
-              <Link href={`/dashboard?page=${page + 1}`} className="text-blue-600 hover:underline">
+              <Link href={`/dashboard?page=${page + 1}`} className="font-medium text-brand-600 hover:text-brand-700">
                 Next →
               </Link>
             ) : (
-              <span className="text-gray-300">Next →</span>
+              <span className="text-neutral-300">Next →</span>
             )}
           </div>
         </div>

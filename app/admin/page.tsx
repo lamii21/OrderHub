@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDuration, formatRelativeTime } from "@/lib/utils";
+import { formatDuration, formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { computeNextSyncAt } from "@/lib/sync-schedule";
 import {
   computeDatabaseHealth,
@@ -210,6 +210,33 @@ export default async function AdminPage({
     );
   }
 
+  // These 13 queries back secondary sections (Recent Activity, Error
+  // Center, per-workflow execution counts, ...) — unlike the ones folded
+  // into criticalError above, a failure here shouldn't take down the whole
+  // page, so each one degrades to its own empty state below. But an empty
+  // result and a genuinely failed query look identical to an operator
+  // unless the failure is logged somewhere — this was previously silent.
+  const secondaryQueryErrors: [string, unknown][] = [
+    ["shopsExtra", shopsExtraResult.error],
+    ["syncsToday", syncsTodayResult.error],
+    ["failedSyncsToday", failedSyncsTodayResult.error],
+    ["executionsToday", executionsTodayResult.error],
+    ["failedExecutionsToday", failedExecutionsTodayResult.error],
+    ["recentOrderSyncs", recentOrderSyncsResult.error],
+    ["recentExecutionStatuses", recentExecutionStatusesResult.error],
+    ["recentOrders", recentOrdersResult.error],
+    ["recentStatusChanges", recentStatusChangesResult.error],
+    ["recentSyncs", recentSyncsResult.error],
+    ["errorCenter", errorCenterResult.error],
+    ["recentWorkflowExecutions", recentWorkflowExecutionsResult.error],
+    ["failedWorkflowExecutions", failedWorkflowExecutionsResult.error],
+  ];
+  for (const [label, error] of secondaryQueryErrors) {
+    if (error) {
+      console.error(`Admin page: secondary query "${label}" failed:`, error);
+    }
+  }
+
   const shops = shopsResult.data as ShopWithStats[];
   const ordersPerDay = ordersPerDayResult.data as { day: string; orders_count: number }[];
   const productStats = (productStatsResult.data as { total_products: number | string }[])[0];
@@ -378,10 +405,10 @@ export default async function AdminPage({
   const lastOrderImported = recentOrders[0] as Record<string, unknown> | undefined;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Administration &amp; Monitoring Center</h1>
-        <div className="flex items-center gap-3">
+    <main className="mx-auto max-w-6xl space-y-8 p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-neutral-900">Administration &amp; Monitoring Center</h1>
+        <div className="flex flex-wrap items-center gap-3">
           <form action={refreshDashboard}>
             <SubmitButton variant="secondary" pendingLabel="Refreshing…">
               Refresh Dashboard
@@ -410,7 +437,7 @@ export default async function AdminPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

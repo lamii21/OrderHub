@@ -13,7 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getEventTypeLabel } from "@/lib/events/types";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { deleteWorkflow, createStarterWorkflow } from "./actions";
 import { activateWorkflow, deactivateWorkflow } from "./[workflowId]/actions";
 import type { ShopWithStats } from "@/types/shop";
@@ -69,14 +69,14 @@ export default async function WorkflowListPage({
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{shop.name} — Workflows</h1>
-          <Link href={`/shops/${shop.id}`} className="text-sm text-blue-600 hover:underline">
+          <h1 className="text-2xl font-semibold text-neutral-900">{shop.name} — Workflows</h1>
+          <Link href={`/shops/${shop.id}`} className="text-sm text-neutral-500 hover:text-neutral-700">
             ← Back to {shop.name}
           </Link>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {workflows.length === 0 && (
             <form action={createStarterWorkflow}>
               <input type="hidden" name="shop_id" value={shop.id} />
@@ -87,7 +87,7 @@ export default async function WorkflowListPage({
           )}
           <Link
             href={`/shops/${shop.id}/workflows/new`}
-            className="inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            className="inline-flex items-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
           >
             New Workflow
           </Link>
@@ -101,7 +101,7 @@ export default async function WorkflowListPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

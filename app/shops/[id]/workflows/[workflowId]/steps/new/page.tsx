@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { SubmitButton } from "@/components/submit-button";
 import { MODULE_CATALOG, getModuleCatalogEntry, type ModuleCategory } from "@/lib/automation-modules/catalog";
 import { addWorkflowStep } from "../../actions";
@@ -94,7 +95,7 @@ export default async function AddWorkflowStepPage({
 
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 
@@ -178,7 +179,7 @@ function PropertiesPanel({
             single-field forms (UI specification §6). */}
         {error && (
           <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-            {decodeURIComponent(error)}
+            {safeDecodeURIComponent(error)}
           </p>
         )}
 

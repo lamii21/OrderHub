@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { computeNextSyncAt, SYNC_FREQUENCIES } from "@/lib/sync-schedule";
 import type { ShopWithStats } from "@/types/shop";
 
@@ -81,7 +81,7 @@ export default async function ShopsPage({
       )}
       {actionError && (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(actionError)}
+          {safeDecodeURIComponent(actionError)}
         </p>
       )}
 

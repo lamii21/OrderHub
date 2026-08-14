@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { EVENT_TYPES, getEventTypeLabel } from "@/lib/events/types";
 import { getModuleCatalogEntry, summarizeStepConfig } from "@/lib/automation-modules/catalog";
-import { formatDuration, formatRelativeTime } from "@/lib/utils";
+import { formatDuration, formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import type { ShopWithStats } from "@/types/shop";
 import type { WorkflowExecution, WorkflowStep, WorkflowWithStats } from "@/types/workflow";
 import {
@@ -160,7 +160,7 @@ export default async function WorkflowEditorPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

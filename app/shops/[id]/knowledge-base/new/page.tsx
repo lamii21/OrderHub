@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { RAG_DOCUMENT_TYPES, RAG_DOCUMENT_TYPE_LABELS } from "@/lib/agent/rag/types";
@@ -30,7 +31,7 @@ export default async function NewKnowledgeBaseDocumentPage({
 
       {error && (
         <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(error)}
+          {safeDecodeURIComponent(error)}
         </p>
       )}
 

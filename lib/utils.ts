@@ -22,6 +22,19 @@ export function formatRelativeTime(date: Date): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+// decodeURIComponent throws on a malformed percent-escape (e.g. a lone "%"
+// reaching the URL by hand-editing or a broken redirect) — every page that
+// echoes a `?error=` search param back into an <ErrorBanner> was calling it
+// directly, which would crash the whole page to the root error boundary
+// over what should be a harmless "just show the raw text" fallback.
+export function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;

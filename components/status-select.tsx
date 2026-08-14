@@ -40,7 +40,8 @@ export function StatusSelect({ orderId, status }: { orderId: number; status: str
         value={value}
         onChange={handleChange}
         disabled={isPending}
-        className={`rounded-md border-0 px-2 py-1 text-xs font-medium capitalize disabled:opacity-50 ${
+        aria-label={`Order status, currently ${value}`}
+        className={`rounded-md border-0 px-2 py-1 text-xs font-medium capitalize focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:opacity-50 ${
           STATUS_STYLES[value] ?? STATUS_STYLES.pending
         }`}
       >

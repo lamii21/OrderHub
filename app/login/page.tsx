@@ -1,4 +1,5 @@
 import { login } from "./actions";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -14,7 +15,7 @@ export default async function LoginPage({
       <h1 className="mb-4 text-2xl font-semibold">Log In</h1>
       {error && (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(error)}
+          {safeDecodeURIComponent(error)}
         </p>
       )}
       <form action={login} className="space-y-4 rounded-lg border bg-white p-6">

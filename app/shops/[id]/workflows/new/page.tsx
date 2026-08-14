@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { EVENT_TYPES, getEventTypeLabel } from "@/lib/events/types";
@@ -26,7 +27,7 @@ export default async function NewWorkflowPage({
 
       {error && (
         <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(error)}
+          {safeDecodeURIComponent(error)}
         </p>
       )}
 

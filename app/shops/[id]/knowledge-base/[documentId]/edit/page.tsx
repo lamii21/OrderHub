@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { ConfirmActionForm } from "@/components/confirm-action-form";
 import { SubmitButton } from "@/components/submit-button";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { RAG_DOCUMENT_TYPES, RAG_DOCUMENT_TYPE_LABELS } from "@/lib/agent/rag/types";
 import { updateDocumentAction, deleteDocumentAction, reindexDocumentAction } from "../../actions";
 
@@ -83,7 +83,7 @@ export default async function EditKnowledgeBaseDocumentPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

@@ -11,17 +11,20 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
 }
 
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
-  return <thead className={cn("[&_tr]:border-b", className)} {...props} />;
+  return <thead className={cn("border-b border-neutral-200 bg-neutral-50", className)} {...props} />;
 }
 
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
-  return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />;
+  return <tbody className={cn("divide-y divide-neutral-200", className)} {...props} />;
 }
 
 function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
-      className={cn("border-b transition-colors hover:bg-gray-50", className)}
+      className={cn(
+        "transition-colors hover:bg-neutral-50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-500",
+        className
+      )}
       {...props}
     />
   );
@@ -31,7 +34,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       className={cn(
-        "h-10 px-3 text-left align-middle font-medium text-gray-500 whitespace-nowrap",
+        "h-10 px-3 text-left align-middle text-xs font-semibold uppercase tracking-wide text-neutral-500 whitespace-nowrap",
         className
       )}
       {...props}

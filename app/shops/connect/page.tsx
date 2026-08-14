@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getGoogleConnectionStatus } from "@/lib/google-oauth";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { connectShop, testConnection, reconnectShop } from "./actions";
 import { FormField } from "@/components/form-field";
 import { SheetCreatedPanel } from "@/components/sheet-created-panel";
@@ -87,7 +88,7 @@ export default async function ConnectStorePage({
 
         {params.error && (
           <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {decodeURIComponent(params.error)}
+            {safeDecodeURIComponent(params.error)}
           </p>
         )}
 
@@ -139,7 +140,7 @@ export default async function ConnectStorePage({
       </h1>
       {params.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(params.error)}
+          {safeDecodeURIComponent(params.error)}
         </p>
       )}
       {params.google_connected && (
@@ -149,7 +150,7 @@ export default async function ConnectStorePage({
       )}
       {params.google_error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(params.google_error)}
+          {safeDecodeURIComponent(params.google_error)}
         </p>
       )}
       {!reconnectTarget && (

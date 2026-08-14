@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { safeDecodeURIComponent } from "@/lib/utils";
 import { SubmitButton } from "@/components/submit-button";
 import { getModuleCatalogEntry } from "@/lib/automation-modules/catalog";
 import { updateWorkflowStep } from "../../../actions";
@@ -116,7 +117,7 @@ export default async function EditWorkflowStepPage({
             reasoning as the add page (UI specification §6). */}
         {sp.error && (
           <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-            {decodeURIComponent(sp.error)}
+            {safeDecodeURIComponent(sp.error)}
           </p>
         )}
 

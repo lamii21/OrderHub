@@ -5,7 +5,6 @@ import { ErrorBanner } from "@/components/error-banner";
 import { StatCard } from "@/components/stat-card";
 import { DetailRow } from "@/components/detail-modal";
 import { SubmitButton } from "@/components/submit-button";
-import { ActionCard } from "@/components/action-card";
 import { SyncActionsPanel } from "@/components/sync-actions-panel";
 import {
   Table,
@@ -15,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDuration, formatRelativeTime } from "@/lib/utils";
+import { formatDuration, formatRelativeTime, safeDecodeURIComponent } from "@/lib/utils";
 import { testConnection } from "@/app/shops/connect/actions";
 import { updateShopName, updateSyncFrequency, disconnectStore } from "../actions";
 import { SYNC_FREQUENCIES, computeNextSyncAt } from "@/lib/sync-schedule";
@@ -131,23 +130,23 @@ export default async function ShopDetailPage({
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{shop.name}</h1>
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-neutral-900">{shop.name}</h1>
+        <div className="flex flex-wrap items-center gap-3">
           <ShopHealthBadge shop={shop} />
-          <Link href={`/shops/${shop.id}/workflows`} className="text-sm text-blue-600 hover:underline">
+          <Link href={`/shops/${shop.id}/workflows`} className="text-sm font-medium text-brand-600 hover:text-brand-700">
             Workflows
           </Link>
           <Link
             href={`/shops/${shop.id}/knowledge-base`}
-            className="text-sm text-blue-600 hover:underline"
+            className="text-sm font-medium text-brand-600 hover:text-brand-700"
           >
             Knowledge Base
           </Link>
-          <Link href={`/shops/${shop.id}/agent`} className="text-sm text-blue-600 hover:underline">
+          <Link href={`/shops/${shop.id}/agent`} className="text-sm font-medium text-brand-600 hover:text-brand-700">
             AI Agent
           </Link>
-          <Link href={`/shops/${shop.id}/settings`} className="text-sm text-blue-600 hover:underline">
+          <Link href={`/shops/${shop.id}/settings`} className="text-sm font-medium text-brand-600 hover:text-brand-700">
             Settings
           </Link>
         </div>
@@ -172,7 +171,7 @@ export default async function ShopDetailPage({
       )}
       {sp.error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(sp.error)}
+          {safeDecodeURIComponent(sp.error)}
         </p>
       )}
 

@@ -5,6 +5,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { GoogleAccountCard } from "@/components/google-account-card";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getGoogleConnectionStatus } from "@/lib/google-oauth";
+import { safeDecodeURIComponent } from "@/lib/utils";
 
 export default async function NewShopPage({
   searchParams,
@@ -40,7 +41,7 @@ export default async function NewShopPage({
       <h1 className="text-2xl font-semibold">New Shop</h1>
       {error && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(error)}
+          {safeDecodeURIComponent(error)}
         </p>
       )}
       {googleConnected && (
@@ -50,7 +51,7 @@ export default async function NewShopPage({
       )}
       {googleError && (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {decodeURIComponent(googleError)}
+          {safeDecodeURIComponent(googleError)}
         </p>
       )}
       <GoogleAccountCard
